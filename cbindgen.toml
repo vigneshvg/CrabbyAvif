@@ -25,6 +25,8 @@ usize_is_size_t = true
 rename_variants = "QualifiedScreamingSnakeCase"
 
 [export]
+prefix = "CRABBYAVIF_"
+renaming_overrides_prefixing = false
 include = [
   "avifChannelIndex",
   "avifCodecFlag",
