@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - cl_fix_macos_ci
   pull_request:
 
 permissions:
@@ -23,7 +24,10 @@ jobs:
         # TODO(vigneshv): macos-latest is temporarily broken on Github CI.
         # Probably has to do with macos upgrade to 14. Enable it once the issues
         # are resolved.
-        os: [ubuntu-latest, windows-latest]
+        os: [macos-latest]
+    env:
+      CC: clang
+      CXX: clang++
 
     steps:
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
