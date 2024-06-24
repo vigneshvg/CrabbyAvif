@@ -43,6 +43,16 @@ impl IBitStream<'_> {
         Ok(value)
     }
 
+    pub fn read_u64(&mut self, n: usize) -> AvifResult<u64> {
+        assert!(n <= 64);
+        let mut value: u64 = 0;
+        for _i in 0..n {
+            value <<= 1;
+            value |= self.read_bit()? as u64;
+        }
+        Ok(value)
+    }
+
     pub fn read_bool(&mut self) -> AvifResult<bool> {
         let bit = self.read_bit()?;
         Ok(bit == 1)
@@ -137,7 +147,7 @@ impl IStream<'_> {
         Ok(&self.data[offset_start..offset_start + size])
     }
 
-    fn get_vec(&mut self, size: usize) -> AvifResult<Vec<u8>> {
+    pub fn get_vec(&mut self, size: usize) -> AvifResult<Vec<u8>> {
         Ok(self.get_slice(size)?.to_vec())
     }
 

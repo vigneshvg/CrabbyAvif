@@ -122,6 +122,8 @@ pub struct Tile {
     pub image: Image,
     pub input: DecodeInput,
     pub codec_index: usize,
+    pub codec_type: CodecType,
+    pub csd: Vec<u8>,
 }
 
 impl Tile {
@@ -139,8 +141,12 @@ impl Tile {
             height: item.height,
             operating_point: item.operating_point(),
             image: Image::default(),
+            codec_type: item.codec_config().unwrap().codec_type(),
             ..Tile::default()
         };
+        if let Some(CodecConfiguration::Hevc(hvcc)) = item.codec_config() {
+            tile.csd = hvcc.data.clone();
+        }
         let mut layer_sizes: [usize; MAX_AV1_LAYER_COUNT] = [0; MAX_AV1_LAYER_COUNT];
         let mut layer_count: usize = 0;
         let a1lx = item.a1lx();

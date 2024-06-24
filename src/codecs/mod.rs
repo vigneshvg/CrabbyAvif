@@ -32,6 +32,7 @@ pub trait Decoder {
         all_layers: bool,
         width: u32,
         height: u32,
+        csd: Option<&Vec<u8>>,
     ) -> AvifResult<()>;
     fn get_next_image(
         &mut self,

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(unused)]
+
 use crate::decoder::gainmap::GainMapMetadata;
 use crate::decoder::track::*;
 use crate::decoder::Extent;
@@ -64,17 +66,19 @@ impl FileTypeBox {
     }
 
     pub fn is_avif(&self) -> bool {
-        self.has_brand("avif") || self.has_brand("avis")
+        // TODO: also need to recognize mif1?
+        self.has_brand("avif") || self.has_brand("avis") || self.has_brand("heic")
         // "avio" also exists but does not identify the file as AVIF on its own. See
         // https://aomediacodec.github.io/av1-avif/v1.1.0.html#image-and-image-collection-brand
     }
 
     pub fn needs_meta(&self) -> bool {
-        self.has_brand("avif")
+        self.has_brand("avif") || self.has_brand("heic")
     }
 
     pub fn needs_moov(&self) -> bool {
-        self.has_brand("avis")
+        // TODO: add the appropriate brands for heif sequences.
+        self.has_brand("avis") || self.has_brand("hevc") || self.has_brand("msf1")
     }
 }
 
@@ -108,7 +112,7 @@ pub struct PixelInformation {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct CodecConfiguration {
+pub struct Av1CodecConfiguration {
     pub seq_profile: u8,
     pub seq_level_idx0: u8,
     pub seq_tier0: u8,
@@ -120,28 +124,93 @@ pub struct CodecConfiguration {
     pub chroma_sample_position: ChromaSamplePosition,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum CodecType {
+    #[default]
+    Av1,
+    Hevc,
+}
+
 impl CodecConfiguration {
+    pub fn codec_type(&self) -> CodecType {
+        match self {
+            Self::Av1(_) => CodecType::Av1,
+            Self::Hevc(_) => CodecType::Hevc,
+        }
+    }
+
     pub fn depth(&self) -> u8 {
-        match self.twelve_bit {
-            true => 12,
-            false => match self.high_bitdepth {
-                true => 10,
-                false => 8,
+        match self {
+            Self::Av1(config) => match config.twelve_bit {
+                true => 12,
+                false => match config.high_bitdepth {
+                    true => 10,
+                    false => 8,
+                },
             },
+            Self::Hevc(_) => 8,
         }
     }
 
     pub fn pixel_format(&self) -> PixelFormat {
-        if self.monochrome {
-            PixelFormat::Yuv400
-        } else if self.chroma_subsampling_x == 1 && self.chroma_subsampling_y == 1 {
-            PixelFormat::Yuv420
-        } else if self.chroma_subsampling_x == 1 {
-            PixelFormat::Yuv422
-        } else {
-            PixelFormat::Yuv444
+        match self {
+            Self::Av1(config) => {
+                if config.monochrome {
+                    PixelFormat::Yuv400
+                } else if config.chroma_subsampling_x == 1 && config.chroma_subsampling_y == 1 {
+                    PixelFormat::Yuv420
+                } else if config.chroma_subsampling_x == 1 {
+                    PixelFormat::Yuv422
+                } else {
+                    PixelFormat::Yuv444
+                }
+            }
+            Self::Hevc(_) => PixelFormat::Yuv420,
         }
     }
+
+    pub fn chroma_sample_position(&self) -> ChromaSamplePosition {
+        match self {
+            Self::Av1(config) => config.chroma_sample_position,
+            Self::Hevc(_) => ChromaSamplePosition::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NALUnit {
+    pub unit_type: u8,
+    pub unit: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HevcCodecConfiguration {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HevcCodecConfiguration2 {
+    pub general_profile_space: u8,
+    pub general_tier_flag: bool,
+    pub general_profile_idc: u8,
+    // unsigned int(32) general_profile_compatibility_flags;
+    // unsigned int(48) general_constraint_indicator_flags;
+    // unsigned int(8) general_level_idc;
+    // bit(4) reserved = '1111'b;
+    // unsigned int(12) min_spatial_segmentation_idc;
+    // bit(6) reserved = '111111'b;
+    // unsigned int(2) parallelismType;
+    // bit(6) reserved = '111111'b;
+    // unsigned int(2) chroma_format_idc;
+    // bit(5) reserved = '11111'b;
+    pub bit_depth_luma: u8,
+    pub bit_depth_chroma: u8,
+    // unsigned int(16) avgFrameRate;
+    // unsigned int(2) constantFrameRate;
+    // unsigned int(3) numTemporalLayers;
+    // unsigned int(1) temporalIdNested;
+    // unsigned int(2) lengthSizeMinusOne;
+    nal_units: Vec<NALUnit>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -173,6 +242,12 @@ pub struct PixelAspectRatio {
 pub struct ContentLightLevelInformation {
     pub max_cll: u16,
     pub max_pall: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CodecConfiguration {
+    Av1(Av1CodecConfiguration),
+    Hevc(HevcCodecConfiguration),
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +335,7 @@ fn parse_header(stream: &mut IStream, top_level: bool) -> AvifResult<BoxHeader> 
         // unsigned int(8) usertype[16] = extended_type;
         stream.skip(16)?;
     }
+    println!("### box type: {} size: {}", box_type, size);
     if size == 0 {
         // Section 4.2.2 of ISO/IEC 14496-12.
         //   if size is 0, then this box shall be in a top-level box (i.e. not contained in another
@@ -513,7 +589,7 @@ fn parse_av1C(stream: &mut IStream) -> AvifResult<ItemProperty> {
             "Invalid version ({version}) in av1C"
         )));
     }
-    let av1C = CodecConfiguration {
+    let av1C = Av1CodecConfiguration {
         // unsigned int(3) seq_profile;
         // unsigned int(5) seq_level_idx_0;
         seq_profile: bits.read(3)? as u8,
@@ -569,7 +645,113 @@ fn parse_av1C(stream: &mut IStream) -> AvifResult<ItemProperty> {
 
     // unsigned int(8) configOBUs[];
 
-    Ok(ItemProperty::CodecConfiguration(av1C))
+    Ok(ItemProperty::CodecConfiguration(CodecConfiguration::Av1(
+        av1C,
+    )))
+}
+
+#[allow(non_snake_case)]
+fn parse_hvcC(stream: &mut IStream) -> AvifResult<ItemProperty> {
+    let mut s2 = IStream { ..*stream };
+    let mut ss = s2.sub_bit_stream(23)?;
+    // unsigned int(8) configurationVersion = 1;
+    println!(
+        "### unsigned int(8) configurationVersion = 1: {}",
+        ss.read(8)?
+    );
+    // unsigned int(2) general_profile_space;
+    println!("### unsigned int(2) general_profile_space: {}", ss.read(2)?);
+    // unsigned int(1) general_tier_flag;
+    println!("### unsigned int(1) general_tier_flag: {}", ss.read(1)?);
+    // unsigned int(5) general_profile_idc;
+    println!("### unsigned int(5) general_profile_idc: {}", ss.read(5)?);
+    // unsigned int(32) general_profile_compatibility_flags;
+    println!(
+        "### unsigned int(32) general_profile_compatibility_flags: {}",
+        ss.read(32)?
+    );
+    // unsigned int(48) general_constraint_indicator_flags;
+    println!(
+        "### unsigned int(48) general_constraint_indicator_flags: {}",
+        ss.read_u64(48)?
+    );
+    // unsigned int(8) general_level_idc;
+    println!("### unsigned int(8) general_level_idc: {}", ss.read(8)?);
+    // bit(4) reserved = ‘1111’b;
+    println!("### bit(4) reserved = ‘1111’b: {}", ss.read(4)?);
+    // unsigned int(12) min_spatial_segmentation_idc;
+    println!(
+        "### unsigned int(12) min_spatial_segmentation_idc: {}",
+        ss.read(12)?
+    );
+    // bit(6) reserved = ‘111111’b;
+    println!("### bit(6) reserved = ‘111111’b: {}", ss.read(6)?);
+    // unsigned int(2) parallelismType;
+    println!("### unsigned int(2) parallelismType: {}", ss.read(2)?);
+    // bit(6) reserved = ‘111111’b;
+    println!("### bit(6) reserved = ‘111111’b: {}", ss.read(6)?);
+    // unsigned int(2) chroma_format_idc;
+    println!("### unsigned int(2) chroma_format_idc: {}", ss.read(2)?);
+    // bit(5) reserved = ‘11111’b;
+    println!("### bit(5) reserved = ‘11111’b: {}", ss.read(5)?);
+    // unsigned int(3) bit_depth_luma_minus8;
+    println!("### unsigned int(3) bit_depth_luma_minus8: {}", ss.read(3)?);
+    // bit(5) reserved = ‘11111’b;
+    println!("### bit(5) reserved = ‘11111’b: {}", ss.read(5)?);
+    // unsigned int(3) bit_depth_chroma_minus8;
+    println!(
+        "### unsigned int(3) bit_depth_chroma_minus8: {}",
+        ss.read(3)?
+    );
+    // bit(16) avgFrameRate;
+    println!("### bit(16) avgFrameRate: {}", ss.read(16)?);
+    // bit(2) constantFrameRate;
+    println!("### bit(2) constantFrameRate: {}", ss.read(2)?);
+    // bit(3) numTemporalLayers;
+    println!("### bit(3) numTemporalLayers: {}", ss.read(3)?);
+    // bit(1) temporalIdNested;
+    println!("### bit(1) temporalIdNested: {}", ss.read(1)?);
+    // unsigned int(2) lengthSizeMinusOne;
+    println!("### unsigned int(2) lengthSizeMinusOne: {}", ss.read(2)?);
+    // unsigned int(8) numOfArrays;
+    let num_of_arrays = ss.read(8)?;
+    println!("### unsigned int(8) numOfArrays: {}", num_of_arrays);
+    println!("### bit offset: {}", ss.bit_offset);
+    let mut data: Vec<u8> = Vec::new();
+    for _j in 0..num_of_arrays {
+        println!("### start NAL ###");
+        let mut ss = s2.sub_bit_stream(3)?;
+        // unsigned int(1) array_completeness;
+        println!("### unsigned int(1) array_completeness: {}", ss.read(1)?);
+        // bit(1) reserved = 0;
+        println!("### bit(1) reserved = 0: {}", ss.read(1)?);
+        // unsigned int(6) NAL_unit_type;
+        println!("### unsigned int(6) NAL_unit_type: {}", ss.read(6)?);
+        // unsigned int(16) numNalus;
+        let num_nalus = ss.read(16)?;
+        println!("### unsigned int(16) numNalus: {}", num_nalus);
+        for _i in 0..num_nalus {
+            let nal_unit_length = s2.read_u16()?;
+            println!("### nal_unit_length: {nal_unit_length}");
+            print!("### nal bytes: ");
+            data.push(0);
+            data.push(0);
+            data.push(0);
+            data.push(1);
+            for _ in 0..nal_unit_length {
+                let byte = s2.read_u8()?;
+                data.push(byte);
+                print!("{}, ", byte);
+            }
+            //s2.skip(usize_from_u16(nal_unit_length)?)?;
+            println!("");
+        }
+        println!("### end NAL ###");
+        println!("");
+    }
+    Ok(ItemProperty::CodecConfiguration(CodecConfiguration::Hevc(
+        HevcCodecConfiguration { data },
+    )))
 }
 
 fn parse_colr(stream: &mut IStream) -> AvifResult<ItemProperty> {
@@ -770,6 +952,7 @@ fn parse_ipco(stream: &mut IStream) -> AvifResult<Vec<ItemProperty>> {
             "lsel" => properties.push(parse_lsel(&mut sub_stream)?),
             "a1lx" => properties.push(parse_a1lx(&mut sub_stream)?),
             "clli" => properties.push(parse_clli(&mut sub_stream)?),
+            "hvcC" => properties.push(parse_hvcC(&mut sub_stream)?),
             _ => properties.push(ItemProperty::Unknown(header.box_type)),
         }
     }
@@ -1661,6 +1844,13 @@ pub fn parse(io: &mut GenericIO) -> AvifResult<AvifBoxes> {
                 }
                 if ftyp.is_some() {
                     let ftyp = ftyp.unwrap_ref();
+                    println!(
+                        "### needs meta: {} {} needs moov: {} {}",
+                        ftyp.needs_meta(),
+                        meta.is_some(),
+                        ftyp.needs_moov(),
+                        tracks.is_some(),
+                    );
                     if (!ftyp.needs_meta() || meta.is_some())
                         && (!ftyp.needs_moov() || tracks.is_some())
                     {

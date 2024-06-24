@@ -74,21 +74,37 @@ pub enum CodecChoice {
 }
 
 impl CodecChoice {
-    fn get_codec(&self) -> AvifResult<Codec> {
+    fn get_codec(&self, codec_type: CodecType) -> AvifResult<Codec> {
         match self {
             CodecChoice::Auto => {
-                // Preferred order of codecs in Auto mode: Android MediaCodec, Dav1d, Libgav1.
-                return CodecChoice::MediaCodec.get_codec().or(CodecChoice::Dav1d
-                    .get_codec()
-                    .or(CodecChoice::Libgav1.get_codec()));
+                match codec_type {
+                    CodecType::Av1 => {
+                        // Preferred order of codecs in Auto mode: Android MediaCodec, Dav1d, Libgav1.
+                        return CodecChoice::MediaCodec.get_codec(codec_type).or(
+                            CodecChoice::Dav1d
+                                .get_codec(codec_type)
+                                .or(CodecChoice::Libgav1.get_codec(codec_type)),
+                        );
+                    }
+                    CodecType::Hevc => {
+                        // Preferred order of codecs in Auto mode: Android MediaCodec, libde265.
+                        return CodecChoice::MediaCodec.get_codec(codec_type);
+                    }
+                }
             }
             CodecChoice::Dav1d => {
+                if codec_type != CodecType::Av1 {
+                    return Err(AvifError::NoCodecAvailable);
+                }
                 #[cfg(feature = "dav1d")]
                 {
                     return Ok(Box::<Dav1d>::default());
                 }
             }
             CodecChoice::Libgav1 => {
+                if codec_type != CodecType::Av1 {
+                    return Err(AvifError::NoCodecAvailable);
+                }
                 #[cfg(feature = "libgav1")]
                 {
                     return Ok(Box::<Libgav1>::default());
@@ -307,7 +323,7 @@ impl Category {
 macro_rules! find_property {
     ($properties:expr, $property_name:ident) => {
         $properties.iter().find_map(|p| match p {
-            ItemProperty::$property_name(value) => Some(*value),
+            ItemProperty::$property_name(value) => Some(value.clone()),
             _ => None,
         })
     };
@@ -414,14 +430,16 @@ impl Decoder {
             .checked_add(1)
             .ok_or(AvifError::NotImplemented)?;
         let first_item = self.items.get(&alpha_item_indices[0]).unwrap();
-        let properties = match first_item.av1C() {
+        let properties = match first_item.codec_config() {
             #[allow(non_snake_case)]
-            Some(av1C) => {
+            Some(CodecConfiguration::Av1(av1C)) => {
                 let mut vector: Vec<ItemProperty> = create_vec_exact(1)?;
-                vector.push(ItemProperty::CodecConfiguration(*av1C));
+                vector.push(ItemProperty::CodecConfiguration(CodecConfiguration::Av1(
+                    *av1C,
+                )));
                 vector
             }
-            None => return Ok(None),
+            _ => return Ok(None),
         };
         let alpha_item = Item {
             id: alpha_item_id,
@@ -671,9 +689,10 @@ impl Decoder {
                 // Adopt the configuration property of the first tile.
                 // validate_properties() makes sure they are all equal.
                 first_av1C = Some(
-                    *dimg_item
+                    dimg_item
                         .av1C()
-                        .ok_or(AvifError::BmffParseFailed("missing av1C property".into()))?,
+                        .ok_or(AvifError::BmffParseFailed("missing av1C property".into()))?
+                        .clone(),
                 );
             }
             if grid_item_ids.len() >= tile_count {
@@ -728,6 +747,8 @@ impl Decoder {
         if self.parse_state == ParseState::None {
             self.reset();
             let avif_boxes = mp4box::parse(self.io.unwrap_mut())?;
+
+            println!("### avif boxes: {:#?}", avif_boxes);
             self.tracks = avif_boxes.tracks;
             if !self.tracks.is_empty() {
                 self.image.image_sequence_track_present = true;
@@ -742,7 +763,10 @@ impl Decoder {
                     }
                 }
             }
+            println!("### whoa1");
             self.items = construct_items(&avif_boxes.meta)?;
+            println!("### items: {:#?}", self.items);
+            println!("### whoa2");
             for item in self.items.values_mut() {
                 item.harvest_ispe(
                     self.settings.strictness.alpha_ispe_required(),
@@ -767,6 +791,8 @@ impl Decoder {
                 Source::Tracks => Source::Tracks,
                 Source::PrimaryItem => Source::PrimaryItem,
             };
+
+            println!("### source: {:#?}", self.source);
 
             let color_properties: &Vec<ItemProperty>;
             let gainmap_properties: Option<&Vec<ItemProperty>>;
@@ -841,6 +867,8 @@ impl Decoder {
                             && x.1.id == avif_boxes.meta.primary_item_id
                     })
                     .map(|it| *it.0);
+
+                println!("### color item id: {:#?}", color_item_id);
 
                 item_ids[Category::Color.usize()] = color_item_id.ok_or(AvifError::NoContent)?;
                 self.read_and_parse_item(item_ids[Category::Color.usize()], Category::Color)?;
@@ -949,13 +977,13 @@ impl Decoder {
                         .unwrap();
                     self.gainmap.image.width = gainmap_item.width;
                     self.gainmap.image.height = gainmap_item.height;
-                    #[allow(non_snake_case)]
-                    let av1C = gainmap_item
-                        .av1C()
+                    let codec_config = gainmap_item
+                        .codec_config()
                         .ok_or(AvifError::BmffParseFailed("".into()))?;
-                    self.gainmap.image.depth = av1C.depth();
-                    self.gainmap.image.yuv_format = av1C.pixel_format();
-                    self.gainmap.image.chroma_sample_position = av1C.chroma_sample_position;
+                    self.gainmap.image.depth = codec_config.depth();
+                    self.gainmap.image.yuv_format = codec_config.pixel_format();
+                    self.gainmap.image.chroma_sample_position =
+                        codec_config.chroma_sample_position();
                 }
 
                 // This borrow has to be in the end of this branch.
@@ -1033,12 +1061,11 @@ impl Decoder {
                 }
             }
 
-            #[allow(non_snake_case)]
-            let av1C = find_property!(color_properties, CodecConfiguration)
+            let codec_config = find_property!(color_properties, CodecConfiguration)
                 .ok_or(AvifError::BmffParseFailed("".into()))?;
-            self.image.depth = av1C.depth();
-            self.image.yuv_format = av1C.pixel_format();
-            self.image.chroma_sample_position = av1C.chroma_sample_position;
+            self.image.depth = codec_config.depth();
+            self.image.yuv_format = codec_config.pixel_format();
+            self.image.chroma_sample_position = codec_config.chroma_sample_position();
 
             if cicp_set {
                 self.parse_state = ParseState::Complete;
@@ -1114,12 +1141,13 @@ impl Decoder {
 
     fn create_codec(&mut self, category: Category, tile_index: usize) -> AvifResult<()> {
         let tile = &self.tiles[category.usize()][tile_index];
-        let mut codec: Codec = self.settings.codec_choice.get_codec()?;
+        let mut codec: Codec = self.settings.codec_choice.get_codec(tile.codec_type)?;
         codec.initialize(
             tile.operating_point,
             tile.input.all_layers,
             tile.width,
             tile.height,
+            if tile.csd.is_empty() { None } else { Some(&tile.csd) },
         )?;
         self.codecs.push(codec);
         Ok(())

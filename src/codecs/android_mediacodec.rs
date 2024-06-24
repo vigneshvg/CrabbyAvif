@@ -64,14 +64,21 @@ impl Decoder for MediaCodec {
         _all_layers: bool,
         width: u32,
         height: u32,
+        csd: Option<&Vec<u8>>,
     ) -> AvifResult<()> {
+        if csd.is_some() {
+            println!("### csd len: {}", csd.unwrap().len());
+        } else {
+            println!("### no csd");
+        }
         // Does not support operating point and all layers.
         if self.codec.is_some() {
             return Ok(()); // Already initialized.
         }
-        //c_str!(codec_mime_type, codec_mime_type_tmp, "video/av01");
+        //c_str!(codec_mime_type, codec_mime_type_tmp, "video/hevc");
         //let codec = unsafe { AMediaCodec_createDecoderByType(codec_mime_type) };
-        c_str!(codec_name, codec_name_tmp, "c2.android.av1.decoder");
+        //c_str!(codec_name, codec_name_tmp, "c2.android.av1.decoder");
+        c_str!(codec_name, codec_name_tmp, "c2.android.hevc.decoder");
         let codec = unsafe { AMediaCodec_createCodecByName(codec_name) };
         if codec.is_null() {
             return Err(AvifError::NoCodecAvailable);
@@ -89,6 +96,16 @@ impl Decoder for MediaCodec {
             // https://developer.android.com/reference/android/media/MediaCodecInfo.CodecCapabilities#COLOR_FormatYUV420Flexible
             //AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 2135033992);
             AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 19);
+
+            if let Some(csd) = csd {
+                println!("### setting csd");
+                AMediaFormat_setBuffer(
+                    format,
+                    AMEDIAFORMAT_KEY_CSD_0,
+                    csd.as_ptr() as *const _,
+                    csd.len(),
+                );
+            }
 
             // TODO: for 10-bit need to set format to 54 in order to get 10-bit
             // output. Or maybe it is possible to get RGB 1010102 itself?
@@ -117,7 +134,7 @@ impl Decoder for MediaCodec {
         category: Category,
     ) -> AvifResult<()> {
         if self.codec.is_none() {
-            self.initialize(0, true, 0, 0)?;
+            self.initialize(0, true, 0, 0, None)?;
         }
         let codec = self.codec.unwrap();
         if self.output_buffer_index.is_some() {
@@ -153,6 +170,7 @@ impl Decoder for MediaCodec {
                 {
                     return Err(AvifError::UnknownError("".into()));
                 }
+                println!("### queued input buffer of len: {}", av1_payload.len());
             } else {
                 return Err(AvifError::UnknownError(format!(
                     "got input index < 0: {input_index}"
@@ -169,6 +187,9 @@ impl Decoder for MediaCodec {
                 let output_index =
                     AMediaCodec_dequeueOutputBuffer(codec, &mut buffer_info as *mut _, 10000);
                 if output_index >= 0 {
+                    if true {
+                        panic!("###");
+                    }
                     let output_buffer = AMediaCodec_getOutputBuffer(
                         codec,
                         usize_from_isize(output_index)?,
@@ -182,8 +203,14 @@ impl Decoder for MediaCodec {
                     break;
                 } else if output_index == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED as isize {
                     // TODO: what to do?
+                    if true {
+                        panic!("### output buffer changed");
+                    }
                     continue;
                 } else if output_index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
+                    if true {
+                        panic!("### got format change");
+                    }
                     let format = AMediaCodec_getOutputFormat(codec);
                     if format.is_null() {
                         return Err(AvifError::UnknownError("output format was null".into()));
@@ -238,7 +265,7 @@ impl Decoder for MediaCodec {
                 image.yuv_format = match color_format {
                     // Android maps all AV1 8-bit images into yuv 420.
                     2135033992 => PixelFormat::Yuv420,
-                    19 => {
+                    19 | 35 => {
                         reverse_uv = false;
                         PixelFormat::Yuv420
                     }

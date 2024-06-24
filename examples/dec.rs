@@ -45,6 +45,8 @@ fn main() {
             enable_decoding_gainmap: true,
             enable_parsing_gainmap_metadata: true,
             allow_progressive: true,
+            ignore_exif: true,
+            ignore_xmp: true,
             ..Settings::default()
         };
         let mut decoder: Decoder = Default::default();

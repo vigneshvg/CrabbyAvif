@@ -236,6 +236,10 @@ impl Item {
         Ok(())
     }
 
+    pub fn codec_config(&self) -> Option<&CodecConfiguration> {
+        find_property!(self.properties, CodecConfiguration)
+    }
+
     #[allow(non_snake_case)]
     pub fn av1C(&self) -> Option<&CodecConfiguration> {
         find_property!(self.properties, CodecConfiguration)
@@ -263,14 +267,23 @@ impl Item {
                                    aux_type == "urn:mpeg:hevc:2015:auxid:1")
     }
 
+    pub fn is_image_item(&self) -> bool {
+        self.item_type == "av01" || self.item_type == "grid" || self.item_type == "hvc1"
+    }
+
     pub fn should_skip(&self) -> bool {
+        println!(
+            "### item id: {} is image item: {}",
+            self.id,
+            self.is_image_item()
+        );
         // The item has no payload in idat or mdat. It cannot be a coded image item, a
         // non-identity derived image item, or Exif/XMP metadata.
         self.size == 0
             // An essential property isn't supported by libavif. Ignore the whole item.
             || self.has_unsupported_essential_property
             // Probably Exif/XMP or some other data.
-            || (self.item_type != "av01" && self.item_type != "grid")
+            || !self.is_image_item()
             // libavif does not support thumbnails.
             || self.thumbnail_for_id != 0
     }
