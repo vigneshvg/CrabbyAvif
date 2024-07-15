@@ -17,6 +17,7 @@ use clap::Parser;
 
 use crabby_avif::decoder::track::RepetitionCount;
 use crabby_avif::decoder::*;
+use crabby_avif::image::*;
 use crabby_avif::utils::clap::CropRect;
 use crabby_avif::*;
 
@@ -29,6 +30,11 @@ use writer::Writer;
 
 use std::fs::File;
 use std::num::NonZero;
+
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+use std::path::Path;
 
 fn depth_parser(s: &str) -> Result<u8, String> {
     match s.parse::<u8>() {
@@ -453,8 +459,57 @@ fn validate_args(args: &CommandLineArgs) -> AvifResult<()> {
     Ok(())
 }
 
+#[allow(unused)]
+fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::Image> {
+    let mut reader =
+        BufReader::new(File::open(filepath).or(Err(AvifError::UnknownError("".into())))?);
+    let y_size = width * height;
+    let uv_size = ((width + 1) / 2) * ((height + 1) / 2);
+    let mut image = image::Image {
+        width,
+        height,
+        depth: 8,
+        yuv_format: PixelFormat::Yuv420,
+        yuv_range: YuvRange::Limited,
+        ..Default::default()
+    };
+    let category = Category::Color;
+    image.allocate_planes(category)?;
+    for plane in category.planes() {
+        let plane_slice = image.slice_mut(*plane)?;
+        reader
+            .read_exact(plane_slice)
+            .or(Err(AvifError::UnknownError("".into())))?;
+    }
+    Ok(image)
+}
+
+#[allow(unused)]
 fn main() {
     let args = CommandLineArgs::parse();
+    if true {
+        let width = 960;
+        let height = 540;
+        println!(
+            "### encoding raw yuv({width}x{height}): {}",
+            args.input_file
+        );
+        let image =
+            read_yuv420p(Path::new(&args.input_file), width, height).expect("yuv reading failed");
+        let mut encoder: encoder::Encoder = Default::default();
+        encoder.add_image(&image, 0, 0).expect("add image failed");
+        let edata = encoder.finish().expect("finish failed");
+        println!("### encoded data final size: {}", edata.len());
+        match args.output_file {
+            Some(filepath) => {
+                let mut file = File::create(&filepath).expect("file creation failed");
+                file.write_all(&edata);
+                println!("### write output to {filepath}");
+            }
+            None => println!("### no output file provided"),
+        }
+        return;
+    }
     if let Err(err) = validate_args(&args) {
         eprintln!("ERROR: {:#?}", err);
         std::process::exit(1);

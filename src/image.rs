@@ -68,7 +68,7 @@ pub enum YuvRange {
     Full = 1,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Image {
     pub width: u32,
     pub height: u32,
@@ -225,6 +225,13 @@ impl Image {
             .slice_mut(start, row_bytes)
     }
 
+    pub fn slice_mut(&mut self, plane: Plane) -> AvifResult<&mut [u8]> {
+        let size = u32_from_usize(self.planes[plane.as_usize()].unwrap_ref().size())?;
+        self.planes[plane.as_usize()]
+            .unwrap_mut()
+            .slice_mut(0, size)
+    }
+
     pub fn row16(&self, plane: Plane, row: u32) -> AvifResult<&[u16]> {
         let plane_data = self.plane_data(plane).ok_or(AvifError::NoContent)?;
         let row_bytes = plane_data.row_bytes / 2;
@@ -292,7 +299,7 @@ impl Image {
         Ok(())
     }
 
-    pub(crate) fn allocate_planes(&mut self, category: Category) -> AvifResult<()> {
+    pub fn allocate_planes(&mut self, category: Category) -> AvifResult<()> {
         self.allocate_planes_with_default_values(category, [0, 0, 0, self.max_channel()])
     }
 

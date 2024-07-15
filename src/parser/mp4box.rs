@@ -48,7 +48,7 @@ impl BoxHeader {
 pub struct FileTypeBox {
     pub major_brand: String,
     // minor_version "is informative only" (section 4.3.1 of ISO/IEC 14496-12)
-    compatible_brands: Vec<String>,
+    pub compatible_brands: Vec<String>,
 }
 
 impl FileTypeBox {
@@ -2024,6 +2024,44 @@ pub(crate) fn parse_tmap(stream: &mut IStream) -> AvifResult<Option<GainMapMetad
     }
     metadata.is_valid()?;
     Ok(Some(metadata))
+}
+
+pub(crate) fn write_ftyp(stream: &mut OStream, ftyp: &FileTypeBox) -> AvifResult<()> {
+    stream.start_box("ftyp")?;
+    // unsigned int(32) major_brand;
+    stream.write_string(&ftyp.major_brand)?;
+    // unsigned int(32) minor_version;
+    stream.write_u32(0)?;
+    // unsigned int(32) compatible_brands[];
+    for compatible_brand in &ftyp.compatible_brands {
+        stream.write_string(compatible_brand)?;
+    }
+    stream.finish_box()?;
+    Ok(())
+}
+
+pub(crate) fn write_hdlr(stream: &mut OStream) -> AvifResult<()> {
+    stream.start_full_box("hdlr", (0, 0))?;
+    // unsigned int(32) pre_defined = 0;
+    stream.write_u32(0)?;
+    // unsigned int(32) handler_type;
+    stream.write_str("pict")?;
+    // const unsigned int(32)[3] reserved = 0;
+    stream.write_u32(0)?;
+    stream.write_u32(0)?;
+    stream.write_u32(0)?;
+    // string name;
+    stream.write_string_with_nul(&String::from(""))?;
+    stream.finish_box()?;
+    Ok(())
+}
+
+pub(crate) fn write_pitm(stream: &mut OStream, item_id: u16) -> AvifResult<()> {
+    stream.start_full_box("pitm", (0, 0))?;
+    //  unsigned int(16) item_ID;
+    stream.write_u16(item_id)?;
+    stream.finish_box()?;
+    Ok(())
 }
 
 #[cfg(test)]

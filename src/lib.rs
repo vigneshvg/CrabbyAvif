@@ -18,6 +18,7 @@
 mod internal_utils;
 
 pub mod decoder;
+pub mod encoder;
 pub mod image;
 pub mod reformat;
 pub mod utils;

@@ -338,7 +338,7 @@ impl Category {
         }
     }
 
-    pub(crate) fn planes(&self) -> &[Plane] {
+    pub fn planes(&self) -> &[Plane] {
         match self {
             Category::Alpha => &A_PLANE,
             _ => &YUV_PLANES,

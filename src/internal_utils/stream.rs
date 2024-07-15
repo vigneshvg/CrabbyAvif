@@ -278,6 +278,152 @@ impl IStream<'_> {
     }
 }
 
+#[derive(Default)]
+#[allow(dead_code)]
+pub(crate) struct OStream {
+    pub data: Vec<u8>,
+    partial: Option<(u8, u8)>,
+    box_marker_offsets: Vec<usize>,
+}
+
+impl OStream {
+    pub(crate) fn offset(&self) -> usize {
+        // TODO: Assert that partial is none.
+        self.data.len()
+    }
+
+    pub(crate) fn try_reserve(&mut self, size: usize) -> AvifResult<()> {
+        self.data.try_reserve(size).or(Err(AvifError::OutOfMemory))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn write_bits(&mut self, value: u8, num_bits: u8) -> AvifResult<()> {
+        if num_bits == 0 || num_bits >= 8 {
+            return Err(AvifError::UnknownError("".into()));
+        }
+        let (bits, offset) = self.partial.unwrap_or((0, 0));
+        if offset + num_bits > 8 {
+            // write_bits cannot overlap multiple bytes.
+            return Err(AvifError::UnknownError("".into()));
+        }
+        let value_at_offset = (value & ((1 << num_bits) - 1)) << (8 - offset - num_bits);
+        let bits = bits | value_at_offset;
+        if offset + num_bits == 8 {
+            self.partial = None;
+            self.write_u8(bits)?;
+        } else {
+            self.partial = Some((bits, offset + num_bits));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_u8(&mut self, value: u8) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(1)?;
+        self.data.push(value);
+        Ok(())
+    }
+
+    pub(crate) fn write_u16(&mut self, value: u16) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(2)?;
+        self.data.extend_from_slice(&value.to_be_bytes());
+        Ok(())
+    }
+
+    pub(crate) fn write_u24(&mut self, value: u32) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(3)?;
+        self.data.extend_from_slice(&value.to_be_bytes()[1..]);
+        Ok(())
+    }
+
+    pub(crate) fn write_u32(&mut self, value: u32) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(4)?;
+        self.data.extend_from_slice(&value.to_be_bytes());
+        Ok(())
+    }
+
+    pub(crate) fn write_u32_at_offset(&mut self, value: u32, offset: usize) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        let range = offset..offset + 4;
+        check_slice_range(self.data.len(), &range)?;
+        self.data[range].copy_from_slice(&value.to_be_bytes());
+        Ok(())
+    }
+
+    pub(crate) fn write_str(&mut self, value: &str) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        let bytes = value.as_bytes();
+        self.try_reserve(bytes.len())?;
+        self.data.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    pub(crate) fn write_string(&mut self, value: &String) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        let bytes = value.as_bytes();
+        self.try_reserve(bytes.len())?;
+        self.data.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    pub(crate) fn write_string_with_nul(&mut self, value: &String) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.write_string(value)?;
+        self.write_u8(0)?;
+        Ok(())
+    }
+
+    pub(crate) fn write_slice(&mut self, data: &[u8]) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(data.len())?;
+        self.data.extend_from_slice(data);
+        Ok(())
+    }
+
+    fn start_box_impl(
+        &mut self,
+        box_type: &str,
+        version_and_flags: Option<(u8, u32)>,
+    ) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.box_marker_offsets.push(self.offset());
+        // 4 bytes for size to be filled out later.
+        self.write_u32(0)?;
+        self.write_str(box_type)?;
+        if let Some((version, flags)) = version_and_flags {
+            self.write_u8(version)?;
+            self.write_u24(flags)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn start_box(&mut self, box_type: &str) -> AvifResult<()> {
+        self.start_box_impl(box_type, None)
+    }
+
+    pub(crate) fn start_full_box(
+        &mut self,
+        box_type: &str,
+        version_and_flags: (u8, u32),
+    ) -> AvifResult<()> {
+        self.start_box_impl(box_type, Some(version_and_flags))
+    }
+
+    pub(crate) fn finish_box(&mut self) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        let offset = self
+            .box_marker_offsets
+            .pop()
+            .ok_or(AvifError::UnknownError("".into()))?;
+        let box_size = u32_from_usize(checked_sub!(self.offset(), offset)?)?;
+        self.write_u32_at_offset(box_size, offset)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +472,24 @@ mod tests {
             Err(AvifError::BmffParseFailed(_))
         ));
         assert_eq!(IStream::create(bytes).read_c_string(), Ok("abcd".into()));
+    }
+
+    #[test]
+    fn write_bits() {
+        let mut stream = OStream::default();
+        assert_eq!(stream.write_bits(1, 1), Ok(()));
+        assert_eq!(stream.data.len(), 0);
+        assert_eq!(stream.write_bits(2, 3), Ok(()));
+        assert_eq!(stream.data.len(), 0);
+        assert_eq!(stream.write_bits(1, 4), Ok(()));
+        assert_eq!(stream.data.len(), 1);
+        assert_eq!(stream.write_bits(1, 4), Ok(()));
+        assert_eq!(stream.data.len(), 1);
+        assert_eq!(stream.write_bits(4, 4), Ok(()));
+        assert_eq!(stream.data.len(), 2);
+        assert_eq!(stream.write_u8(0xCC), Ok(()));
+        assert_eq!(stream.data.len(), 3);
+        assert_eq!(stream.data, vec![0xA1, 0x14, 0xCC]);
+        assert!(stream.write_bits(1, 10).is_err());
     }
 }
