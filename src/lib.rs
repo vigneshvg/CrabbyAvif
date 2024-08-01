@@ -19,6 +19,10 @@ pub mod image;
 pub mod reformat;
 pub mod utils;
 
+#[macro_use] extern crate log;
+extern crate android_logger;
+
+
 #[cfg(feature = "capi")]
 pub mod capi;
 

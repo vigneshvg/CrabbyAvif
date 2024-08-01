@@ -26,6 +26,9 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
 
+use log::LevelFilter;
+use android_logger::Config;
+
 #[derive(Debug, Default)]
 pub struct MediaCodec {
     codec: Option<*mut AMediaCodec>,
@@ -66,6 +69,9 @@ impl Decoder for MediaCodec {
         height: u32,
         csd: Option<&Vec<u8>>,
     ) -> AvifResult<()> {
+        android_logger::init_once(
+            Config::default().with_max_level(LevelFilter::Trace),
+        );
         if csd.is_some() {
             println!("### csd len: {}", csd.unwrap().len());
         } else {
@@ -88,16 +94,17 @@ impl Decoder for MediaCodec {
             return Err(AvifError::UnknownError("".into()));
         }
         unsafe {
-            c_str!(mime_type, mime_type_tmp, "video/av01");
+            //c_str!(mime_type, mime_type_tmp, "video/av01");
+            c_str!(mime_type, mime_type_tmp, "image/vnd.android.heic");
             AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mime_type);
             AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, i32_from_u32(width)?);
             AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, i32_from_u32(height)?);
 
             // https://developer.android.com/reference/android/media/MediaCodecInfo.CodecCapabilities#COLOR_FormatYUV420Flexible
             //AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 2135033992);
-            AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 19);
+            //AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 19);
 
-            if let Some(csd) = csd {
+            if let Some(csd) = csd  {
                 println!("### setting csd");
                 AMediaFormat_setBuffer(
                     format,
@@ -106,6 +113,14 @@ impl Decoder for MediaCodec {
                     csd.len(),
                 );
             }
+            c_str!(num_inp_buf, num_inp_buf_tmp, "android._num-input-buffers");
+            AMediaFormat_setInt32(format, num_inp_buf, 1);
+            c_str!(num_op_buf, num_op_buf_tmp, "android._num-output-buffers");
+            AMediaFormat_setInt32(format, num_op_buf, 1);
+            c_str!(level_buf, level_buf_tmp, "level");
+            AMediaFormat_setInt32(format, level_buf, 256);
+            c_str!(max_inp_size, max_inp_size_buf, "max-input-size");
+            AMediaFormat_setInt32(format, max_inp_size, 1444800);
 
             // TODO: for 10-bit need to set format to 54 in order to get 10-bit
             // output. Or maybe it is possible to get RGB 1010102 itself?
@@ -120,6 +135,7 @@ impl Decoder for MediaCodec {
             if AMediaCodec_start(codec) != media_status_t_AMEDIA_OK {
                 return Err(AvifError::NoCodecAvailable);
             }
+            error!("### configure complete");
             AMediaFormat_delete(format);
         }
         self.codec = Some(codec);
@@ -157,8 +173,20 @@ impl Decoder for MediaCodec {
                         "input buffer at index {input_index} was null"
                     )));
                 }
+                println!("### input buffer size: {input_buffer_size}");
                 // TODO: Alternative is to create a slice from raw parts and use copy_from_slice.
                 ptr::copy_nonoverlapping(av1_payload.as_ptr(), input_buffer, av1_payload.len());
+                let sl = std::slice::from_raw_parts_mut(input_buffer, 4);
+                sl[0] = 0;
+                sl[1] = 0;
+                sl[2] = 0;
+                sl[3] = 1;
+                let dd = std::slice::from_raw_parts(input_buffer, 10);
+                //println!("### first {} bytes: {:#?}", dd.len(), dd);
+                println!("### first {} bytes:", dd.len());
+                for (i, v) in dd.iter().enumerate() {
+                    println!("### {i}: {v}");
+                }
                 if AMediaCodec_queueInputBuffer(
                     codec,
                     usize_from_isize(input_index)?,
@@ -171,6 +199,31 @@ impl Decoder for MediaCodec {
                     return Err(AvifError::UnknownError("".into()));
                 }
                 println!("### queued input buffer of len: {}", av1_payload.len());
+                error!("### queued input buffer of len: {}", av1_payload.len());
+                // queue eos.
+                let input_eos_index = AMediaCodec_dequeueInputBuffer(codec, 0);
+                println!("### Input_index: {input_index} input_eos_index: {input_eos_index}");
+                if true {
+                    if input_eos_index >= 0{
+                        if AMediaCodec_queueInputBuffer(
+                            codec,
+                            usize_from_isize(input_eos_index)?,
+                            /*offset=*/ 0,
+                            /*payload_length=*/0,
+                            /*pts=*/ 0,
+                            AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32,
+                        ) != media_status_t_AMEDIA_OK
+                        {
+                            return Err(AvifError::UnknownError("".into()));
+                        }
+                        println!("### queued input eos");
+                        error!("### queued input eos");
+                    } else {
+                        return Err(AvifError::UnknownError(format!(
+                            "got input eos index < 0: {input_eos_index}"
+                        )));
+                    }
+                }
             } else {
                 return Err(AvifError::UnknownError(format!(
                     "got input index < 0: {input_index}"
@@ -187,9 +240,6 @@ impl Decoder for MediaCodec {
                 let output_index =
                     AMediaCodec_dequeueOutputBuffer(codec, &mut buffer_info as *mut _, 10000);
                 if output_index >= 0 {
-                    if true {
-                        panic!("###");
-                    }
                     let output_buffer = AMediaCodec_getOutputBuffer(
                         codec,
                         usize_from_isize(output_index)?,
@@ -203,14 +253,8 @@ impl Decoder for MediaCodec {
                     break;
                 } else if output_index == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED as isize {
                     // TODO: what to do?
-                    if true {
-                        panic!("### output buffer changed");
-                    }
                     continue;
                 } else if output_index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
-                    if true {
-                        panic!("### got format change");
-                    }
                     let format = AMediaCodec_getOutputFormat(codec);
                     if format.is_null() {
                         return Err(AvifError::UnknownError("output format was null".into()));

@@ -14,6 +14,8 @@ ndk-sys = {version = "0.1.0", path="sys/ndk-sys", optional = true}
 dav1d-sys = {version = "0.1.0", path="sys/dav1d-sys", optional = true}
 libgav1-sys = {version = "0.1.0", path="sys/libgav1-sys", optional = true}
 libyuv-sys = {version = "0.1.0", path="sys/libyuv-sys", optional = true}
+android_logger = {version="0.14.1", optional = true}
+log = {version = "0.4.22", optional = true}
 
 [dev-dependencies]
 test-case = "3.3.1"
@@ -33,7 +35,7 @@ capi = []
 dav1d = ["dep:libc", "dep:dav1d-sys"]
 libgav1 = ["dep:libgav1-sys"]
 libyuv = ["dep:libyuv-sys"]
-android_mediacodec = ["dep:ndk-sys"]
+android_mediacodec = ["dep:ndk-sys", "dep:android_logger", "dep:log"]
 
 [package.metadata.capi.header]
 name = "avif"
