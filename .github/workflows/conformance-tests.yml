@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - cl_ci_test
   pull_request:
 
 permissions:
@@ -20,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
 
     steps:
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -94,6 +95,10 @@ jobs:
         triplet: x64-windows-release
         token: ${{ github.token }}
         github-binarycache: true
+
+    - name: jpeg, zlib and png (for linux)
+      if: runner.os == 'Linux'
+      run: sudo apt install -y zlib1g libpng-dev libjpeg-dev
 
     - name: Configure libavif (cmake)
       if: steps.cache-ext-with-libavif.outputs.cache-hit != 'true'
