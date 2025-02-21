@@ -504,10 +504,26 @@ fn main() {
             "### encoding raw yuv({width}x{height}): {}",
             args.input_file
         );
-        let image =
-            read_yuv420p(Path::new(&args.input_file), width, height).expect("yuv reading failed");
         let mut encoder: encoder::Encoder = Default::default();
-        encoder.add_image(&image, 0, 0).expect("add image failed");
+        let grid_rows = 1;
+        let grid_columns = 1;
+        if grid_rows * grid_columns > 1 {
+            let mut images: Vec<Image> = Vec::new();
+            for _ in 0..grid_rows * grid_columns {
+                images.push(
+                    read_yuv420p(Path::new(&args.input_file), width, height)
+                        .expect("yuv reading failed"),
+                );
+            }
+            let image_refs: Vec<&Image> = images.iter().collect();
+            encoder
+                .add_image_grid(grid_columns, grid_rows, &image_refs, 0)
+                .expect("add image failed");
+        } else {
+            let image = read_yuv420p(Path::new(&args.input_file), width, height)
+                .expect("yuv reading failed");
+            encoder.add_image(&image, 0, 0).expect("add image failed");
+        }
         let edata = encoder.finish().expect("finish failed");
         println!("### encoded data final size: {}", edata.len());
         match args.output_file {

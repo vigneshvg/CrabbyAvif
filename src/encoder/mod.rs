@@ -81,6 +81,7 @@ struct Item {
     )>,
     extra_layer_count: Option<u32>,
     dimg_from_id: Option<u16>, // If some, then make an iref from dimg_from_id to this id.
+    metadata_payload: Vec<u8>,
 }
 
 impl fmt::Debug for Item {
@@ -227,13 +228,57 @@ impl Category {
     }
 }
 
+fn write_grid(stream: &mut OStream, grid: &Grid) -> AvifResult<()> {
+    // ISO/IEC 23008-12 6.6.2.3.2
+    // aligned(8) class ImageGrid {
+    //     unsigned int(8) version = 0;
+    //     unsigned int(8) flags;
+    //     FieldLength = ((flags & 1) + 1) * 16;
+    //     unsigned int(8) rows_minus_one;
+    //     unsigned int(8) columns_minus_one;
+    //     unsigned int(FieldLength) output_width;
+    //     unsigned int(FieldLength) output_height;
+    // }
+    let flags = if grid.width > 65535 || grid.height > 65535 { 1 } else { 0 };
+    // unsigned int(8) version = 0;
+    stream.write_u8(0)?;
+    // unsigned int(8) flags;
+    stream.write_u8(flags)?;
+    // unsigned int(8) rows_minus_one;
+    stream.write_u8(grid.rows as u8 - 1)?;
+    // unsigned int(8) columns_minus_one;
+    stream.write_u8(grid.columns as u8 - 1)?;
+    // unsigned int(FieldLength) output_width;
+    // unsigned int(FieldLength) output_height;
+    if flags == 1 {
+        stream.write_u32(grid.width)?;
+        stream.write_u32(grid.height)?;
+    } else {
+        stream.write_u16(grid.width as u16)?;
+        stream.write_u16(grid.height as u16)?;
+    }
+    Ok(())
+}
+
 impl Encoder {
     fn add_items(&mut self, grid: &Grid, category: Category) -> AvifResult<u16> {
         let cell_count = usize_from_u32(grid.rows * grid.columns)?;
         println!("### cell_count: {cell_count}");
         let mut top_level_item_id = 0;
         if cell_count > 1 {
-            // TODO: stuff.
+            let mut stream = OStream::default();
+            write_grid(&mut stream, grid)?;
+            let mut item = Item {
+                id: u16_from_usize(self.items.len() + 1)?,
+                item_type: "grid".into(),
+                infe_name: category.infe_name(),
+                category,
+                grid: Some(*grid),
+                metadata_payload: stream.data,
+                ..Default::default()
+            };
+            top_level_item_id = item.id;
+            self.items.push(item);
         }
         // TODO: create vec exact.
         for cell_index in 0..cell_count {
@@ -258,8 +303,8 @@ impl Encoder {
 
     fn add_image_impl(
         &mut self,
-        grid_rows: u32,
         grid_columns: u32,
+        grid_rows: u32,
         cell_images: &[&Image],
         mut duration: u32,
         flags: u32,
@@ -343,7 +388,7 @@ impl Encoder {
             let image = cell_images[item.cell_index];
             let first_image = cell_images[0];
             if image.width != first_image.width || image.height != first_image.height {
-                // TODO: padding or something.
+                // TODO: pad the image so that the dimensions of all cells are equal.
             }
             item.codec.unwrap_mut().encode_image(
                 image,
@@ -363,6 +408,20 @@ impl Encoder {
         self.add_image_impl(1, 1, &[image], duration, flags)
     }
 
+    pub fn add_image_grid(
+        &mut self,
+        grid_columns: u32,
+        grid_rows: u32,
+        images: &[&Image],
+        flags: u32,
+    ) -> AvifResult<()> {
+        if grid_columns == 0 || grid_columns > 256 || grid_rows == 0 || grid_rows > 256 {
+            return Err(AvifError::InvalidImageGrid("".into()));
+        }
+        // TODO: if layer count is zero, set single image flag here.
+        self.add_image_impl(grid_columns, grid_rows, images, 1, flags)
+    }
+
     #[allow(unused)]
     pub fn finish(&mut self) -> AvifResult<Vec<u8>> {
         if self.items.is_empty() {
@@ -378,7 +437,7 @@ impl Encoder {
             if !item.samples.is_empty() {
                 // Harvest codec configuration from sequence header.
                 let sequence_header = Av1SequenceHeader::parse_from_obus(&item.samples[0].data)?;
-                println!("### seq_header: {:#?}", sequence_header);
+                //println!("### seq_header: {:#?}", sequence_header);
                 item.codec_configuration = CodecConfiguration::Av1(sequence_header.config);
             }
         }
@@ -456,7 +515,7 @@ impl Encoder {
             // unsigned int(offset_size*8) extent_offset;
             stream.write_u32(0)?;
             let extent_length = if item.samples.is_empty() {
-                0
+                u32_from_usize(item.metadata_payload.len())?
             } else {
                 u32_from_usize(item.samples[0].data.len())?
             };
@@ -507,7 +566,28 @@ impl Encoder {
     fn write_iref(&self, stream: &mut OStream) -> AvifResult<()> {
         let mut box_started = false;
         for item in &self.items {
-            // TODO: handle dimg items.
+            let dimg_item_ids: Vec<_> = self
+                .items
+                .iter()
+                .filter(|dimg_item| dimg_item.dimg_from_id.unwrap_or_default() == item.id)
+                .map(|dimg_item| dimg_item.id)
+                .collect();
+            if !dimg_item_ids.is_empty() {
+                if !box_started {
+                    stream.start_full_box("iref", (0, 0))?;
+                    box_started = true;
+                }
+                stream.start_box("dimg")?;
+                // unsigned int(16) from_item_ID;
+                stream.write_u16(item.id)?;
+                // unsigned int(16) reference_count;
+                stream.write_u16(u16_from_usize(dimg_item_ids.len())?)?;
+                for dimg_item_id in dimg_item_ids {
+                    // unsigned int(16) to_item_ID;
+                    stream.write_u16(dimg_item_id)?;
+                }
+                stream.finish_box()?;
+            }
             if let Some(iref_to_id) = item.iref_to_id {
                 if !box_started {
                     stream.start_full_box("iref", (0, 0))?;
@@ -620,21 +700,31 @@ impl Encoder {
         // enabled.
         for pass in 0..=2 {
             for item in &self.items {
-                if (pass == 0 && item.codec.is_some()) || (pass > 0 && item.codec.is_none()) {
+                if pass == 0
+                    && item.item_type != "mime"
+                    && item.item_type != "Exif"
+                    && item.item_type != "tmap"
+                {
                     continue;
                 }
                 if pass == 1 && !matches!(item.category, Category::Alpha | Category::Gainmap) {
                     continue;
                 }
-                if pass == 2 && item.category != Category::Color {}
+                if pass == 2 && item.category != Category::Color {
+                    continue;
+                }
                 let chunk_offset = stream.offset();
                 // TODO: alpha, gainmap, dedupe, etc.
                 if !item.samples.is_empty() {
                     for sample in &item.samples {
                         stream.write_slice(&sample.data);
                     }
+                } else if !item.metadata_payload.is_empty() {
+                    println!("### writing metadata payload");
+                    stream.write_slice(&item.metadata_payload);
                 } else {
-                    // TODO: write metadata.
+                    panic!("### empty item");
+                    // TODO: empty item, ignore or error?
                 }
                 for mdat_offset_location in &item.mdat_offset_locations {
                     stream.write_u32_at_offset(
