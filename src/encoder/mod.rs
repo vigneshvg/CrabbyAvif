@@ -190,6 +190,47 @@ impl Item {
         stream.finish_box()?;
         Ok(())
     }
+
+    pub(crate) fn get_property_streams(
+        &mut self,
+        image_metadata: &Image,
+        streams: &mut Vec<OStream>,
+    ) -> AvifResult<()> {
+        if !self.has_ipma() {
+            return Ok(());
+        }
+
+        streams.push(OStream::default());
+        self.write_ispe(streams.last_mut().unwrap(), image_metadata)?;
+        self.associations
+            .push((u8_from_usize(streams.len())?, false));
+
+        streams.push(OStream::default());
+        self.write_pixi(streams.last_mut().unwrap(), image_metadata)?;
+        self.associations
+            .push((u8_from_usize(streams.len())?, false));
+
+        if self.codec.is_some() {
+            streams.push(OStream::default());
+            self.write_codec_config(streams.last_mut().unwrap())?;
+            self.associations
+                .push((u8_from_usize(streams.len())?, true));
+        }
+
+        match self.category {
+            Category::Color => {
+                // TODO: write color and hdr properties.
+            }
+            Category::Alpha => {
+                streams.push(OStream::default());
+                self.write_auxC(streams.last_mut().unwrap())?;
+                self.associations
+                    .push((u8_from_usize(streams.len())?, false));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -611,74 +652,71 @@ impl Encoder {
 
     fn write_iprp(&mut self, stream: &mut OStream) -> AvifResult<()> {
         stream.start_box("iprp")?;
-        let mut property_index = 1;
         // ipco
-        {
-            stream.start_box("ipco")?;
-            // TODO: refactor this loop as a member function of Item struct.
-            for item in &mut self.items {
-                if !item.has_ipma() {
-                    continue;
+        stream.start_box("ipco")?;
+        let mut property_streams = Vec::new();
+        for item in &mut self.items {
+            item.get_property_streams(&self.image_metadata, &mut property_streams)?;
+        }
+        // Deduplicate the property streams.
+        let mut property_index_map = Vec::new();
+        let mut last_written_property_index = 0u8;
+        for i in 0..property_streams.len() {
+            let current_data = &property_streams[i].data;
+            match property_streams[0..i]
+                .iter()
+                .position(|x| x.data == *current_data)
+            {
+                Some(property_index) => {
+                    // A duplicate stream was already written. Simply store the index of that
+                    // stream.
+                    property_index_map.push(property_index_map[property_index as usize]);
                 }
-                item.write_ispe(stream, &self.image_metadata)?;
-                item.associations.push((property_index, false));
-                property_index += 1;
-
-                item.write_pixi(stream, &self.image_metadata)?;
-                item.associations.push((property_index, false));
-                property_index += 1;
-
-                if item.codec.is_some() {
-                    item.write_codec_config(stream)?;
-                    item.associations.push((property_index, true));
-                    property_index += 1;
-                }
-
-                match item.category {
-                    Category::Color => {
-                        // TODO: write color and hdr properties.
-                    }
-                    Category::Alpha => {
-                        item.write_auxC(stream)?;
-                        item.associations.push((property_index, false));
-                        property_index += 1;
-                    }
-                    _ => {}
+                None => {
+                    // No duplicate streams were found. Write this stream and store its index.
+                    stream.write_slice(current_data)?;
+                    last_written_property_index += 1;
+                    property_index_map.push(last_written_property_index);
                 }
             }
-            stream.finish_box()?;
         }
+        stream.finish_box()?;
+        // end of ipco
+
         // ipma
-        {
-            stream.start_full_box("ipma", (0, 0))?;
-            let entry_count = u32_from_usize(
-                self.items
-                    .iter()
-                    .filter(|&item| !item.associations.is_empty())
-                    .count(),
-            )?;
-            // unsigned int(32) entry_count;
-            stream.write_u32(entry_count)?;
-            for item in &self.items {
-                if item.associations.is_empty() {
-                    continue;
-                }
-                // unsigned int(16) item_ID;
-                stream.write_u16(item.id)?;
-                // unsigned int(8) association_count;
-                stream.write_u8(u8_from_usize(item.associations.len())?)?;
-                for (property_index, essential) in &item.associations {
-                    // bit(1) essential;
-                    stream.write_bits(*essential as u8, 1)?;
-                    if *property_index >= (1 << 7) {
-                        return Err(AvifError::UnknownError("".into()));
-                    }
-                    // unsigned int(7) property_index;
-                    stream.write_bits(*property_index, 7)?;
-                }
+        stream.start_full_box("ipma", (0, 0))?;
+        let entry_count = u32_from_usize(
+            self.items
+                .iter()
+                .filter(|&item| !item.associations.is_empty())
+                .count(),
+        )?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(entry_count)?;
+        for item in &self.items {
+            if item.associations.is_empty() {
+                continue;
             }
-            stream.finish_box()?;
+            // unsigned int(16) item_ID;
+            stream.write_u16(item.id)?;
+            // unsigned int(8) association_count;
+            stream.write_u8(u8_from_usize(item.associations.len())?)?;
+            for (property_index, essential) in &item.associations {
+                // bit(1) essential;
+                stream.write_bits(*essential as u8, 1)?;
+                // property_index_map is 0-indexed whereas the index stored in item.associations is
+                // 1-indexed.
+                let index = property_index_map[*property_index as usize - 1];
+                if index >= (1 << 7) {
+                    return Err(AvifError::UnknownError("".into()));
+                }
+                // unsigned int(7) property_index;
+                stream.write_bits(index, 7)?;
+            }
         }
+        stream.finish_box()?;
+        // end of ipma
+
         stream.finish_box()?;
         Ok(())
     }
