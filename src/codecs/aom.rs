@@ -73,6 +73,11 @@ impl Encoder for Aom {
             }
             config.rc_min_quantizer = quantizer as u32;
             config.rc_max_quantizer = quantizer as u32;
+            config.monochrome = match category {
+                Category::Color => 0,
+                Category::Alpha => 1,
+                _ => return Err(AvifError::NotImplemented),
+            };
 
             let mut encoder_uninit: MaybeUninit<aom_codec_ctx_t> = MaybeUninit::uninit();
             let err = unsafe {
@@ -88,6 +93,43 @@ impl Encoder for Aom {
                 return Err(AvifError::UnknownError("".into()));
             }
             self.encoder = Some(unsafe { encoder_uninit.assume_init() });
+
+            match category {
+                Category::Alpha => unsafe {
+                    aom_codec_control(
+                        self.encoder.unwrap_mut() as *mut _,
+                        aome_enc_control_id_AV1E_SET_COLOR_RANGE as _,
+                        aom_color_range_AOM_CR_FULL_RANGE,
+                    );
+                },
+                Category::Color => unsafe {
+                    aom_codec_control(
+                        self.encoder.unwrap_mut() as *mut _,
+                        aome_enc_control_id_AV1E_SET_COLOR_PRIMARIES as _,
+                        image.color_primaries,
+                    );
+                    aom_codec_control(
+                        self.encoder.unwrap_mut() as *mut _,
+                        aome_enc_control_id_AV1E_SET_TRANSFER_CHARACTERISTICS as _,
+                        image.transfer_characteristics,
+                    );
+                    aom_codec_control(
+                        self.encoder.unwrap_mut() as *mut _,
+                        aome_enc_control_id_AV1E_SET_MATRIX_COEFFICIENTS as _,
+                        image.matrix_coefficients,
+                    );
+                    aom_codec_control(
+                        self.encoder.unwrap_mut() as *mut _,
+                        aome_enc_control_id_AV1E_SET_COLOR_RANGE as _,
+                        if image.yuv_range == YuvRange::Limited {
+                            aom_color_range_AOM_CR_STUDIO_RANGE
+                        } else {
+                            aom_color_range_AOM_CR_FULL_RANGE
+                        },
+                    );
+                },
+                _ => todo!("not implemented"),
+            }
         }
         println!("### here 2");
         let mut aom_image: aom_image_t = unsafe { std::mem::zeroed() };
@@ -102,19 +144,25 @@ impl Encoder for Aom {
         aom_image.y_chroma_shift = 1;
         match category {
             Category::Color => {
+                aom_image.range = image.yuv_range as u32;
+                aom_image.monochrome = 0;
                 for i in 0..3 {
                     aom_image.planes[i] = image.planes[i].unwrap_ref().ptr() as *mut u8;
                     aom_image.stride[i] = image.row_bytes[i] as i32;
                 }
             }
+            Category::Alpha => {
+                aom_image.range = aom_color_range_AOM_CR_FULL_RANGE;
+                aom_image.monochrome = 1;
+                aom_image.planes[0] = image.planes[3].unwrap_ref().ptr() as *mut u8;
+                aom_image.stride[0] = image.row_bytes[3] as i32;
+            }
             _ => return Err(AvifError::NotImplemented),
         }
+        println!("## aom range: {}", aom_image.range);
         aom_image.cp = image.color_primaries as u32;
         aom_image.tc = image.transfer_characteristics as u32;
         aom_image.mc = image.matrix_coefficients as u32;
-        aom_image.range = image.yuv_range as u32;
-        //println!("### aom image: {:#?}", aom_image);
-        // TODO: cicp.
         let err = unsafe {
             aom_codec_encode(
                 self.encoder.unwrap_mut() as *mut _,

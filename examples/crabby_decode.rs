@@ -481,6 +481,16 @@ fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::I
             .read_exact(plane_slice)
             .or(Err(AvifError::UnknownError("".into())))?;
     }
+    if true {
+        let category = Category::Alpha;
+        image.allocate_planes(category)?;
+        for y in 0..image.height {
+            let alpha_row = image.row_mut(Plane::A, y)?;
+            for pixel in alpha_row {
+                *pixel = std::cmp::min(y, 255) as u8;
+            }
+        }
+    }
     Ok(image)
 }
 

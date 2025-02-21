@@ -129,7 +129,11 @@ impl Item {
         image_metadata: &Image,
     ) -> AvifResult<()> {
         stream.start_full_box("pixi", (0, 0))?;
-        let num_channels = image_metadata.yuv_format.plane_count() as u8;
+        let num_channels = if self.category == Category::Alpha {
+            1
+        } else {
+            image_metadata.yuv_format.plane_count() as u8
+        };
         // unsigned int (8) num_channels;
         stream.write_u8(num_channels)?;
         for _ in 0..num_channels {
@@ -174,6 +178,15 @@ impl Item {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn write_auxC(&mut self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("auxC", (0, 0))?;
+        stream
+            .write_string_with_nul(&String::from("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))?;
+        stream.finish_box()?;
         Ok(())
     }
 }
@@ -296,7 +309,23 @@ impl Encoder {
             };
             let color_item_id = self.add_items(&grid, Category::Color)?;
             self.primary_item_id = color_item_id;
-            // TODO: alpha stuff.
+            self.alpha_present = first_image.has_plane(Plane::A);
+
+            if self.alpha_present && self.single_image {
+                // TODO: Handle opaque alpha.
+            }
+
+            if self.alpha_present {
+                let alpha_item_id = self.add_items(&grid, Category::Alpha)?;
+                let alpha_item = &mut self.items[alpha_item_id as usize - 1];
+                alpha_item.iref_type = Some(String::from("auxl"));
+                alpha_item.iref_to_id = Some(color_item_id);
+                if self.image_metadata.alpha_premultiplied {
+                    let color_item = &mut self.items[color_item_id as usize - 1];
+                    color_item.iref_type = Some(String::from("prem"));
+                    color_item.iref_to_id = Some(alpha_item_id);
+                }
+            }
             // TODO: gainmap.
             // TODO: exif, xmp.
         } else {
@@ -349,6 +378,7 @@ impl Encoder {
             if !item.samples.is_empty() {
                 // Harvest codec configuration from sequence header.
                 let sequence_header = Av1SequenceHeader::parse_from_obus(&item.samples[0].data)?;
+                println!("### seq_header: {:#?}", sequence_header);
                 item.codec_configuration = CodecConfiguration::Av1(sequence_header.config);
             }
         }
@@ -474,8 +504,28 @@ impl Encoder {
         Ok(())
     }
 
-    fn write_iref(&self, _stream: &mut OStream) -> AvifResult<()> {
-        // TODO: Implement this.
+    fn write_iref(&self, stream: &mut OStream) -> AvifResult<()> {
+        let mut box_started = false;
+        for item in &self.items {
+            // TODO: handle dimg items.
+            if let Some(iref_to_id) = item.iref_to_id {
+                if !box_started {
+                    stream.start_full_box("iref", (0, 0))?;
+                    box_started = true;
+                }
+                stream.start_box(item.iref_type.as_ref().unwrap().as_str())?;
+                // unsigned int(16) from_item_ID;
+                stream.write_u16(item.id)?;
+                // unsigned int(16) reference_count;
+                stream.write_u16(1)?;
+                // unsigned int(16) to_item_ID;
+                stream.write_u16(iref_to_id)?;
+                stream.finish_box()?;
+            }
+        }
+        if box_started {
+            stream.finish_box()?;
+        }
         Ok(())
     }
 
@@ -485,11 +535,11 @@ impl Encoder {
         // ipco
         {
             stream.start_box("ipco")?;
+            // TODO: refactor this loop as a member function of Item struct.
             for item in &mut self.items {
                 if !item.has_ipma() {
                     continue;
                 }
-
                 item.write_ispe(stream, &self.image_metadata)?;
                 item.associations.push((property_index, false));
                 property_index += 1;
@@ -502,6 +552,18 @@ impl Encoder {
                     item.write_codec_config(stream)?;
                     item.associations.push((property_index, true));
                     property_index += 1;
+                }
+
+                match item.category {
+                    Category::Color => {
+                        // TODO: write color and hdr properties.
+                    }
+                    Category::Alpha => {
+                        item.write_auxC(stream)?;
+                        item.associations.push((property_index, false));
+                        property_index += 1;
+                    }
+                    _ => {}
                 }
             }
             stream.finish_box()?;
@@ -541,23 +603,45 @@ impl Encoder {
         Ok(())
     }
 
+    #[allow(unused)]
     fn write_mdat(&self, stream: &mut OStream) -> AvifResult<()> {
         stream.start_box("mdat")?;
         let mdat_start_offset = stream.offset();
-        for item in &self.items {
-            // TODO: alpha, gainmap, dedupe, etc.
-            if !item.samples.is_empty() {
-                for sample in &item.samples {
-                    stream.write_slice(&sample.data);
+        // Use multiple passes to pack the items in the following order:
+        //   * Pass 0: metadata (Exif/XMP/gain map metadata)
+        //   * Pass 1: alpha, gain map image (AV1)
+        //   * Pass 2: all other item data (AV1 color)
+        //
+        // See here for the discussion on alpha coming before color:
+        // https://github.com/AOMediaCodec/libavif/issues/287
+        //
+        // Exif and XMP are packed first as they're required to be fully available by
+        // Decoder::parse() before it returns AVIF_RESULT_OK, unless ignore_xmp and ignore_exif are
+        // enabled.
+        for pass in 0..=2 {
+            for item in &self.items {
+                if (pass == 0 && item.codec.is_some()) || (pass > 0 && item.codec.is_none()) {
+                    continue;
                 }
-            } else {
-                // TODO: write metadata.
-            }
-            for mdat_offset_location in &item.mdat_offset_locations {
-                stream.write_u32_at_offset(
-                    u32_from_usize(mdat_start_offset)?,
-                    *mdat_offset_location,
-                )?;
+                if pass == 1 && !matches!(item.category, Category::Alpha | Category::Gainmap) {
+                    continue;
+                }
+                if pass == 2 && item.category != Category::Color {}
+                let chunk_offset = stream.offset();
+                // TODO: alpha, gainmap, dedupe, etc.
+                if !item.samples.is_empty() {
+                    for sample in &item.samples {
+                        stream.write_slice(&sample.data);
+                    }
+                } else {
+                    // TODO: write metadata.
+                }
+                for mdat_offset_location in &item.mdat_offset_locations {
+                    stream.write_u32_at_offset(
+                        u32_from_usize(chunk_offset)?,
+                        *mdat_offset_location,
+                    )?;
+                }
             }
         }
         stream.finish_box()?;
