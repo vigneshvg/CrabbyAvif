@@ -43,6 +43,7 @@ impl Encoder for Aom {
         tile_columns_log2: i32,
         quantizer: i32,
         disable_lagged_output: bool,
+        is_single_image: bool,
         output_samples: &mut Vec<Sample>,
     ) -> AvifResult<()> {
         println!("### here 1");
@@ -64,8 +65,7 @@ impl Encoder for Aom {
             config.g_w = image.width;
             config.g_h = image.height;
 
-            if true {
-                // TODO: ADD IMAGE SINGLE FLAG
+            if is_single_image {
                 config.g_limit = 1;
                 config.g_lag_in_frames = 0;
                 config.kf_mode = aom_kf_mode_AOM_KF_DISABLED;
@@ -163,13 +163,15 @@ impl Encoder for Aom {
         aom_image.cp = image.color_primaries as u32;
         aom_image.tc = image.transfer_characteristics as u32;
         aom_image.mc = image.matrix_coefficients as u32;
+        //let encode_flags = AOM_EFLAG_FORCE_KF as i64;
+        let encode_flags = 0;
         let err = unsafe {
             aom_codec_encode(
                 self.encoder.unwrap_mut() as *mut _,
                 &aom_image as *const _,
                 0,
                 1,
-                0,
+                encode_flags,
             )
         };
         if err != aom_codec_err_t_AOM_CODEC_OK {
@@ -198,9 +200,7 @@ impl Encoder for Aom {
                 }
             }
         }
-        // If single image flag, flush the encoder and close it.
-        if true {
-            // TODO: Flush encoder.
+        if is_single_image {
             self.finish()?;
             unsafe {
                 aom_codec_destroy(self.encoder.unwrap_mut() as *mut _);

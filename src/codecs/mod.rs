@@ -67,6 +67,7 @@ pub trait Encoder {
         tile_columns_log2: i32,
         quantizer: i32,
         disable_lagged_output: bool,
+        is_single_image: bool,
         output_samples: &mut Vec<crate::encoder::Sample>,
     ) -> AvifResult<()>;
     fn finish(&mut self) -> AvifResult<()>;

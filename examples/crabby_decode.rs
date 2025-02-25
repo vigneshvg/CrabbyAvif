@@ -481,7 +481,7 @@ fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::I
             .read_exact(plane_slice)
             .or(Err(AvifError::UnknownError("".into())))?;
     }
-    if true {
+    if false {
         let category = Category::Alpha;
         image.allocate_planes(category)?;
         for y in 0..image.height {
@@ -505,24 +505,38 @@ fn main() {
             args.input_file
         );
         let mut encoder: encoder::Encoder = Default::default();
-        let grid_rows = 1;
-        let grid_columns = 1;
-        if grid_rows * grid_columns > 1 {
+        let image_count = 20;
+        if image_count > 1 {
             let mut images: Vec<Image> = Vec::new();
-            for _ in 0..grid_rows * grid_columns {
+            for _ in 0..image_count {
                 images.push(
                     read_yuv420p(Path::new(&args.input_file), width, height)
                         .expect("yuv reading failed"),
                 );
+                encoder
+                    .add_image_for_sequence(images.last().unwrap(), 1000)
+                    .expect("add image failed");
             }
-            let image_refs: Vec<&Image> = images.iter().collect();
-            encoder
-                .add_image_grid(grid_columns, grid_rows, &image_refs, 0)
-                .expect("add image failed");
         } else {
-            let image = read_yuv420p(Path::new(&args.input_file), width, height)
-                .expect("yuv reading failed");
-            encoder.add_image(&image, 0, 0).expect("add image failed");
+            let grid_rows = 1;
+            let grid_columns = 1;
+            if grid_rows * grid_columns > 1 {
+                let mut images: Vec<Image> = Vec::new();
+                for _ in 0..grid_rows * grid_columns {
+                    images.push(
+                        read_yuv420p(Path::new(&args.input_file), width, height)
+                            .expect("yuv reading failed"),
+                    );
+                }
+                let image_refs: Vec<&Image> = images.iter().collect();
+                encoder
+                    .add_image_grid(grid_columns, grid_rows, &image_refs)
+                    .expect("add image failed");
+            } else {
+                let image = read_yuv420p(Path::new(&args.input_file), width, height)
+                    .expect("yuv reading failed");
+                encoder.add_image(&image).expect("add image failed");
+            }
         }
         let edata = encoder.finish().expect("finish failed");
         println!("### encoded data final size: {}", edata.len());

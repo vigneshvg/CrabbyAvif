@@ -182,6 +182,7 @@ conversion_function!(u8_from_usize, u8, usize);
 conversion_function!(u32_from_u64, u32, u64);
 conversion_function!(u32_from_i32, u32, i32);
 conversion_function!(i32_from_u32, i32, u32);
+conversion_function!(u16_from_u32, u16, u32);
 #[cfg(feature = "android_mediacodec")]
 conversion_function!(isize_from_i32, isize, i32);
 #[cfg(any(feature = "capi", feature = "android_mediacodec"))]

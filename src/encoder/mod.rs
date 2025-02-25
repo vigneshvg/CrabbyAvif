@@ -145,7 +145,7 @@ impl Item {
         Ok(())
     }
 
-    pub(crate) fn write_codec_config(&mut self, stream: &mut OStream) -> AvifResult<()> {
+    pub(crate) fn write_codec_config(&self, stream: &mut OStream) -> AvifResult<()> {
         match &self.codec_configuration {
             CodecConfiguration::Av1(config) => {
                 stream.start_box("av1C")?;
@@ -231,6 +231,253 @@ impl Item {
         }
         Ok(())
     }
+
+    pub(crate) fn write_tkhd(
+        &self,
+        stream: &mut OStream,
+        image_metadata: &Image,
+        duration: u64,
+        timestamp: u64,
+    ) -> AvifResult<()> {
+        stream.start_full_box("tkhd", (1, 1))?;
+        // unsigned int(64) creation_time;
+        stream.write_u64(timestamp)?;
+        // unsigned int(64) modification_time;
+        stream.write_u64(timestamp)?;
+        // unsigned int(32) track_ID;
+        stream.write_u32(self.id as u32)?;
+        // const unsigned int(32) reserved = 0;
+        stream.write_u32(0)?;
+        // unsigned int(64) duration;
+        stream.write_u64(duration)?;
+        // const unsigned int(32)[2] reserved = 0;
+        stream.write_u32(0)?;
+        stream.write_u32(0)?;
+        // template int(16) layer = 0;
+        stream.write_u16(0)?;
+        // template int(16) alternate_group = 0;
+        stream.write_u16(0)?;
+        // template int(16) volume = {if track_is_audio 0x0100 else 0};
+        stream.write_u16(0)?;
+        // const unsigned int(16) reserved = 0;
+        stream.write_u16(0)?;
+        // template int(32)[9] matrix
+        stream.write_slice(&UNITY_MATRIX)?;
+        // unsigned int(32) width;
+        stream.write_u32(image_metadata.width << 16)?;
+        // unsigned int(32) height;
+        stream.write_u32(image_metadata.height << 16)?;
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_vmhd(&self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("vmhd", (0, 1))?;
+        // template unsigned int(16) graphicsmode = 0; (copy over the existing image)
+        stream.write_u16(0)?;
+        // template unsigned int(16)[3] opcolor = {0, 0, 0};
+        stream.write_u16(0)?;
+        stream.write_u16(0)?;
+        stream.write_u16(0)?;
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_dinf(&self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_box("dinf")?;
+        {
+            stream.start_full_box("dref", (0, 0))?;
+            // unsigned int(32) entry_count
+            stream.write_u32(1)?;
+            {
+                // flags:1 means data is in this file
+                stream.start_full_box("url ", (0, 1))?;
+                stream.finish_box()?;
+            }
+            stream.finish_box()?;
+        }
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_ccst(&self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("ccst", (0, 0))?;
+        // unsigned int(1) all_ref_pics_intra;
+        stream.write_bits(0, 1)?;
+        // unsigned int(1) intra_pred_used;
+        stream.write_bits(1, 1)?;
+        // unsigned int(4) max_ref_per_pic;
+        stream.write_bits(15, 4)?;
+        // unsigned int(26) reserved;
+        stream.write_bits(0, 2)?;
+        stream.write_u8(0)?;
+        stream.write_u8(0)?;
+        stream.write_u8(0)?;
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stsd(
+        &self,
+        stream: &mut OStream,
+        image_metadata: &Image,
+    ) -> AvifResult<()> {
+        stream.start_full_box("stsd", (0, 0))?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(1)?;
+        {
+            stream.start_box("av01")?;
+            // const unsigned int(8)[6] reserved = 0;
+            for _ in 0..6 {
+                stream.write_u8(0)?;
+            }
+            // unsigned int(16) data_reference_index;
+            stream.write_u16(1)?;
+            // unsigned int(16) pre_defined = 0;
+            stream.write_u16(0)?;
+            // const unsigned int(16) reserved = 0;
+            stream.write_u16(0)?;
+            // unsigned int(32)[3] pre_defined = 0;
+            stream.write_u32(0)?;
+            stream.write_u32(0)?;
+            stream.write_u32(0)?;
+            // unsigned int(16) width;
+            stream.write_u16(u16_from_u32(image_metadata.width)?)?;
+            // unsigned int(16) height;
+            stream.write_u16(u16_from_u32(image_metadata.height)?)?;
+            // template unsigned int(32) horizresolution
+            stream.write_u32(0x00480000)?;
+            // template unsigned int(32) vertresolution
+            stream.write_u32(0x00480000)?;
+            // const unsigned int(32) reserved = 0;
+            stream.write_u32(0)?;
+            // template unsigned int(16) frame_count = 1;
+            stream.write_u16(1)?;
+            // string[32] compressorname;
+            const COMPRESSOR_NAME: &str = "AOM Coding                      ";
+            assert_eq!(COMPRESSOR_NAME.len(), 32);
+            stream.write_str(COMPRESSOR_NAME)?;
+            // template unsigned int(16) depth = 0x0018;
+            stream.write_u16(0x0018)?;
+            // int(16) pre_defined = -1
+            stream.write_u16(0xffff)?;
+
+            self.write_codec_config(stream)?;
+            if self.category == Category::Color {
+                // TODO: write color, HDR and transformative properties.
+            }
+            self.write_ccst(stream)?;
+
+            stream.finish_box()?;
+        }
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stts(
+        &self,
+        stream: &mut OStream,
+        duration_in_timescales: &Vec<u64>,
+    ) -> AvifResult<()> {
+        let mut stts: Vec<(u64, u32)> = Vec::new();
+        let mut current_value = None;
+        let mut current_count = 0;
+        for duration in duration_in_timescales {
+            if let Some(current) = current_value {
+                if *duration == current {
+                    current_count += 1;
+                } else {
+                    stts.push((current, current_count));
+                    current_value = Some(*duration);
+                    current_count = 1;
+                }
+            } else {
+                current_value = Some(*duration);
+                current_count = 1;
+            }
+        }
+        if let Some(current) = current_value {
+            stts.push((current, current_count));
+        }
+
+        stream.start_full_box("stts", (0, 0))?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(u32_from_usize(stts.len())?)?;
+        for (sample_delta, sample_count) in stts {
+            // unsigned int(32) sample_count;
+            stream.write_u32(sample_count)?;
+            // unsigned int(32) sample_delta;
+            stream.write_u32(u32_from_u64(sample_delta)?)?;
+        }
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stsc(&self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("stsc", (0, 0))?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(1)?;
+        // unsigned int(32) first_chunk;
+        stream.write_u32(1)?;
+        // unsigned int(32) samples_per_chunk;
+        stream.write_u32(u32_from_usize(self.samples.len())?)?;
+        // unsigned int(32) sample_description_index;
+        stream.write_u32(1)?;
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stsz(&self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("stsz", (0, 0))?;
+        // unsigned int(32) sample_size;
+        stream.write_u32(0)?;
+        // unsigned int(32) sample_count;
+        stream.write_u32(u32_from_usize(self.samples.len())?)?;
+        for sample in &self.samples {
+            // unsigned int(32) entry_size;
+            stream.write_u32(u32_from_usize(sample.data.len())?)?;
+        }
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stco(&mut self, stream: &mut OStream) -> AvifResult<()> {
+        stream.start_full_box("stco", (0, 0))?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(1)?;
+        // unsigned int(32) chunk_offset;
+        self.mdat_offset_locations.push(stream.offset());
+        stream.write_u32(0)?;
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stss(&mut self, stream: &mut OStream) -> AvifResult<()> {
+        let sync_samples_count = self.samples.iter().filter(|x| x.sync).count();
+        if sync_samples_count == self.samples.len() {
+            // ISO/IEC 14496-12, Section 8.6.2.1:
+            //   If the SyncSampleBox is not present, every sample is a sync sample.
+            return Ok(());
+        }
+        stream.start_full_box("stss", (0, 0))?;
+        // unsigned int(32) entry_count;
+        stream.write_u32(u32_from_usize(sync_samples_count)?)?;
+        for (index, sample) in self.samples.iter().enumerate() {
+            if !sample.sync {
+                continue;
+            }
+            // unsigned int(32) sample_number;
+            stream.write_u32(u32_from_usize(index + 1)?)?;
+        }
+        stream.finish_box()
+    }
+
+    pub(crate) fn write_stbl(
+        &mut self,
+        stream: &mut OStream,
+        image_metadata: &Image,
+        duration_in_timescales: &Vec<u64>,
+    ) -> AvifResult<()> {
+        stream.start_box("stbl")?;
+        self.write_stsd(stream, image_metadata)?;
+        self.write_stts(stream, duration_in_timescales)?;
+        self.write_stsc(stream)?;
+        self.write_stsz(stream)?;
+        self.write_stco(stream)?;
+        self.write_stss(stream)?;
+        stream.finish_box()
+    }
 }
 
 #[derive(Default)]
@@ -268,6 +515,18 @@ impl Category {
         .into()
     }
 }
+
+const UNITY_MATRIX: [u8; 9 * 4] = [
+    0x00, 0x01, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x01, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, //
+    0x40, 0x00, 0x00, 0x00, //
+];
 
 fn write_grid(stream: &mut OStream, grid: &Grid) -> AvifResult<()> {
     // ISO/IEC 23008-12 6.6.2.3.2
@@ -348,7 +607,7 @@ impl Encoder {
         grid_rows: u32,
         cell_images: &[&Image],
         mut duration: u32,
-        flags: u32,
+        is_single_image: bool,
     ) -> AvifResult<()> {
         // TODO: validate layer count.
         let cell_count: usize = usize_from_u32(grid_rows * grid_columns)?;
@@ -415,7 +674,8 @@ impl Encoder {
             // TODO: gainmap.
             // TODO: exif, xmp.
         } else {
-            // TODO: stuff for layered and animations.
+            // Another frame in an image sequence, or layer in a layered image.
+            // TODO: validate image against self.image_metadata.
         }
 
         println!("### items: {:#?}", self.items);
@@ -438,6 +698,7 @@ impl Encoder {
                 /*tile_columns_log2=*/ 0,
                 /*quantizer=*/ 50,
                 /*disable_lagged_output=*/ true,
+                is_single_image,
                 &mut item.samples,
             )?;
         }
@@ -445,8 +706,13 @@ impl Encoder {
         Ok(())
     }
 
-    pub fn add_image(&mut self, image: &Image, duration: u32, flags: u32) -> AvifResult<()> {
-        self.add_image_impl(1, 1, &[image], duration, flags)
+    pub fn add_image(&mut self, image: &Image) -> AvifResult<()> {
+        self.add_image_impl(1, 1, &[image], 0, true)
+    }
+
+    pub fn add_image_for_sequence(&mut self, image: &Image, duration: u32) -> AvifResult<()> {
+        // TODO: this and add_image cannot be used on the same instance.
+        self.add_image_impl(1, 1, &[image], duration, false)
     }
 
     pub fn add_image_grid(
@@ -454,13 +720,12 @@ impl Encoder {
         grid_columns: u32,
         grid_rows: u32,
         images: &[&Image],
-        flags: u32,
     ) -> AvifResult<()> {
         if grid_columns == 0 || grid_columns > 256 || grid_rows == 0 || grid_rows > 256 {
             return Err(AvifError::InvalidImageGrid("".into()));
         }
         // TODO: if layer count is zero, set single image flag here.
-        self.add_image_impl(grid_columns, grid_rows, images, 1, flags)
+        self.add_image_impl(grid_columns, grid_rows, images, 0, true)
     }
 
     #[allow(unused)]
@@ -468,6 +733,7 @@ impl Encoder {
         if self.items.is_empty() {
             return Err(AvifError::NoContent);
         }
+        self.settings.timescale = 10000;
         for item in &mut self.items {
             if item.codec.is_none() {
                 continue;
@@ -483,10 +749,6 @@ impl Encoder {
             }
         }
         let image_metadata = &self.image_metadata;
-        let now: u64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         let mut stream = OStream::default();
         let is_sequence = self.duration_in_timescales.len() > 1;
         let mut ftyp = FileTypeBox {
@@ -519,13 +781,30 @@ impl Encoder {
         write_ftyp(&mut stream, &ftyp)?;
         // meta box.
         stream.start_full_box("meta", (0, 0))?;
-        write_hdlr(&mut stream)?;
+        write_hdlr(&mut stream, &String::from("pict"))?;
         write_pitm(&mut stream, self.primary_item_id)?;
         self.write_iloc(&mut stream)?;
         self.write_iinf(&mut stream)?;
         self.write_iref(&mut stream)?;
         self.write_iprp(&mut stream)?;
         stream.finish_box()?;
+        // moov box.
+        if is_sequence {
+            let frames_duration_in_timescales = self
+                .duration_in_timescales
+                .iter()
+                .try_fold(0u64, |acc, &x| acc.checked_add(x))
+                .ok_or(AvifError::UnknownError("".into()))?;
+            let timestamp: u64 = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            // TODO: duration_in_timescales should account for loop count.
+            stream.start_box("moov")?;
+            self.write_mvhd(&mut stream, frames_duration_in_timescales, timestamp)?;
+            self.write_tracks(&mut stream, frames_duration_in_timescales, timestamp)?;
+            stream.finish_box()?;
+        }
         // mdat box.
         self.write_mdat(&mut stream)?;
         Ok(stream.data)
@@ -718,6 +997,100 @@ impl Encoder {
         // end of ipma
 
         stream.finish_box()?;
+        Ok(())
+    }
+
+    fn write_mvhd(
+        &mut self,
+        stream: &mut OStream,
+        duration: u64,
+        timestamp: u64,
+    ) -> AvifResult<()> {
+        stream.start_full_box("mvhd", (1, 0))?;
+        // unsigned int(64) creation_time;
+        stream.write_u64(timestamp)?;
+        // unsigned int(64) modification_time;
+        stream.write_u64(timestamp)?;
+        // unsigned int(32) timescale;
+        stream.write_u32(u32_from_u64(self.settings.timescale)?)?;
+        // unsigned int(64) duration;
+        stream.write_u64(duration)?;
+        // template int(32) rate = 0x00010000; // typically 1.0
+        stream.write_u32(0x00010000)?;
+        // template int(16) volume = 0x0100; // typically, full volume
+        stream.write_u16(0x0100)?;
+        // const bit(16) reserved = 0;
+        stream.write_u16(0)?;
+        // const unsigned int(32)[2] reserved = 0;
+        stream.write_u32(0)?;
+        stream.write_u32(0)?;
+        // template int(32)[9] matrix
+        stream.write_slice(&UNITY_MATRIX)?;
+        // bit(32)[6] pre_defined = 0;
+        for _ in 0..6 {
+            stream.write_u32(0)?;
+        }
+        println!("### ITEMS LEN: {}", self.items.len());
+        // unsigned int(32) next_track_ID;
+        stream.write_u32(u32_from_usize(self.items.len())?)?;
+        stream.finish_box()
+    }
+
+    fn write_tracks(
+        &mut self,
+        stream: &mut OStream,
+        duration: u64,
+        timestamp: u64,
+    ) -> AvifResult<()> {
+        for item in &mut self.items {
+            if item.samples.is_empty() {
+                continue;
+            }
+            stream.start_box("trak")?;
+            item.write_tkhd(stream, &self.image_metadata, duration, timestamp)?;
+            if let Some(iref_to_id) = item.iref_to_id {
+                todo!("write tref box");
+            }
+            // TODO: write edts box.
+            if item.category == Category::Color {
+                // TODO: write track meta box.
+            }
+            // mdia
+            {
+                stream.start_box("mdia")?;
+                // mdhd
+                {
+                    stream.start_full_box("mdhd", (1, 0))?;
+                    // unsigned int(64) creation_time;
+                    stream.write_u64(timestamp)?;
+                    // unsigned int(64) modification_time;
+                    stream.write_u64(timestamp)?;
+                    // unsigned int(32) timescale;
+                    stream.write_u32(u32_from_u64(self.settings.timescale)?)?;
+                    // unsigned int(64) duration;
+                    stream.write_u64(duration)?;
+                    // bit(1) pad = 0; unsigned int(5)[3] language; ("und")
+                    stream.write_u16(21956)?;
+                    // unsigned int(16) pre_defined = 0;
+                    stream.write_u16(0)?;
+                    stream.finish_box()?;
+                }
+                write_hdlr(
+                    stream,
+                    &String::from(if item.category == Category::Alpha { "auxv" } else { "pict" }),
+                )?;
+                // minf
+                {
+                    stream.start_box("minf")?;
+                    item.write_vmhd(stream)?;
+                    item.write_dinf(stream)?;
+                    item.write_stbl(stream, &self.image_metadata, &self.duration_in_timescales)?;
+                    stream.finish_box()?;
+                }
+                stream.finish_box()?;
+            }
+            stream.finish_box()?;
+        }
         Ok(())
     }
 

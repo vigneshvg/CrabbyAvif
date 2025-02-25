@@ -2040,12 +2040,12 @@ pub(crate) fn write_ftyp(stream: &mut OStream, ftyp: &FileTypeBox) -> AvifResult
     Ok(())
 }
 
-pub(crate) fn write_hdlr(stream: &mut OStream) -> AvifResult<()> {
+pub(crate) fn write_hdlr(stream: &mut OStream, handler_type: &String) -> AvifResult<()> {
     stream.start_full_box("hdlr", (0, 0))?;
     // unsigned int(32) pre_defined = 0;
     stream.write_u32(0)?;
     // unsigned int(32) handler_type;
-    stream.write_str("pict")?;
+    stream.write_str(handler_type)?;
     // const unsigned int(32)[3] reserved = 0;
     stream.write_u32(0)?;
     stream.write_u32(0)?;

@@ -353,6 +353,13 @@ impl OStream {
         Ok(())
     }
 
+    pub(crate) fn write_u64(&mut self, value: u64) -> AvifResult<()> {
+        assert!(self.partial.is_none());
+        self.try_reserve(8)?;
+        self.data.extend_from_slice(&value.to_be_bytes());
+        Ok(())
+    }
+
     pub(crate) fn write_str(&mut self, value: &str) -> AvifResult<()> {
         assert!(self.partial.is_none());
         let bytes = value.as_bytes();
