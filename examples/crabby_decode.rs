@@ -17,6 +17,7 @@ use clap::Parser;
 
 use crabby_avif::decoder::track::RepetitionCount;
 use crabby_avif::decoder::*;
+use crabby_avif::encoder::*;
 use crabby_avif::image::*;
 use crabby_avif::utils::clap::CropRect;
 use crabby_avif::*;
@@ -502,7 +503,8 @@ fn main() {
     if true {
         let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
         let mut image = y4m.read_frame().expect("failed to read y4m frame");
-        let mut encoder: encoder::Encoder = Default::default();
+        let settings = Settings::default();
+        let mut encoder = Encoder::create_with_settings(&settings);
         if y4m.has_more_frames() {
             let mut frame_count = 0;
             loop {

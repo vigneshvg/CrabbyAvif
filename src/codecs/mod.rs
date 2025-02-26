@@ -59,18 +59,26 @@ pub trait Decoder {
     // Destruction must be implemented using Drop.
 }
 
+#[allow(unused)]
+#[derive(Clone, Copy, Default)]
+pub struct EncoderConfig {
+    pub tile_rows_log2: i32,
+    pub tile_columns_log2: i32,
+    pub quantizer: i32,
+    pub disable_lagged_output: bool,
+    pub is_single_image: bool,
+}
+
 pub trait Encoder {
+    // TODO: this function can return vec of samples instead of it being an output param.
     fn encode_image(
         &mut self,
         image: &Image,
         category: Category,
-        tile_rows_log2: i32,
-        tile_columns_log2: i32,
-        quantizer: i32,
-        disable_lagged_output: bool,
-        is_single_image: bool,
+        config: &EncoderConfig,
         output_samples: &mut Vec<crate::encoder::Sample>,
     ) -> AvifResult<()>;
+    // TODO: this function also has to add to output_samples.
     fn finish(&mut self) -> AvifResult<()>;
     // Destruction must be implemented using Drop.
 }

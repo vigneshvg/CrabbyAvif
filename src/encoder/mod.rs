@@ -20,6 +20,7 @@ pub mod mp4box;
 use crate::encoder::item::*;
 use crate::encoder::mp4box::*;
 
+use crate::codecs::EncoderConfig;
 use crate::image::*;
 use crate::internal_utils::stream::OStream;
 use crate::internal_utils::*;
@@ -100,6 +101,17 @@ const UNITY_MATRIX: [u8; 9 * 4] = [
 ];
 
 impl Encoder {
+    pub fn create_with_settings(settings: &Settings) -> Self {
+        Self {
+            settings: *settings,
+            ..Default::default()
+        }
+    }
+
+    pub fn update_settings(&mut self, settings: &Settings) {
+        self.settings = *settings;
+    }
+
     fn add_items(&mut self, grid: &Grid, category: Category) -> AvifResult<u16> {
         let cell_count = usize_from_u32(grid.rows * grid.columns)?;
         println!("### cell_count: {cell_count}");
@@ -231,14 +243,17 @@ impl Encoder {
             if image.width != first_image.width || image.height != first_image.height {
                 // TODO: pad the image so that the dimensions of all cells are equal.
             }
+            let encoder_config = EncoderConfig {
+                tile_rows_log2: 0,
+                tile_columns_log2: 0,
+                quantizer: 50,
+                disable_lagged_output: true,
+                is_single_image,
+            };
             item.codec.unwrap_mut().encode_image(
                 image,
                 item.category,
-                /*tile_rows_log2=*/ 0,
-                /*tile_columns_log2=*/ 0,
-                /*quantizer=*/ 50,
-                /*disable_lagged_output=*/ true,
-                is_single_image,
+                &encoder_config,
                 &mut item.samples,
             )?;
         }

@@ -14,7 +14,7 @@
 
 #![allow(unused)]
 
-use crate::codecs::Encoder;
+use crate::codecs::*;
 use crate::encoder::Sample;
 use crate::image::Image;
 use crate::image::YuvRange;
@@ -28,7 +28,7 @@ use std::mem::MaybeUninit;
 #[derive(Default)]
 pub struct Aom {
     encoder: Option<aom_codec_ctx_t>,
-    config: Option<aom_codec_enc_cfg>,
+    aom_config: Option<aom_codec_enc_cfg>,
 }
 
 const AOM_CODEC_OK: u32 = 0;
@@ -38,11 +38,7 @@ impl Encoder for Aom {
         &mut self,
         image: &Image,
         category: Category,
-        tile_rows_log2: i32,
-        tile_columns_log2: i32,
-        quantizer: i32,
-        disable_lagged_output: bool,
-        is_single_image: bool,
+        config: &EncoderConfig,
         output_samples: &mut Vec<Sample>,
     ) -> AvifResult<()> {
         println!("### here 1");
@@ -56,24 +52,24 @@ impl Encoder for Aom {
             if err != aom_codec_err_t_AOM_CODEC_OK {
                 return Err(AvifError::UnknownError("".into()));
             }
-            self.config = Some(unsafe { cfg_uninit.assume_init() });
-            let config = self.config.unwrap_mut();
-            config.rc_end_usage = aom_rc_mode_AOM_CBR;
+            self.aom_config = Some(unsafe { cfg_uninit.assume_init() });
+            let aom_config = self.aom_config.unwrap_mut();
+            aom_config.rc_end_usage = aom_rc_mode_AOM_CBR;
             // TODO: handle 444 here.
-            config.g_profile = 0;
-            config.g_bit_depth = image.depth as u32;
-            config.g_w = image.width;
-            config.g_h = image.height;
+            aom_config.g_profile = 0;
+            aom_config.g_bit_depth = image.depth as u32;
+            aom_config.g_w = image.width;
+            aom_config.g_h = image.height;
 
-            if is_single_image {
-                config.g_limit = 1;
-                config.g_lag_in_frames = 0;
-                config.kf_mode = aom_kf_mode_AOM_KF_DISABLED;
-                config.kf_max_dist = 0;
+            if config.is_single_image {
+                aom_config.g_limit = 1;
+                aom_config.g_lag_in_frames = 0;
+                aom_config.kf_mode = aom_kf_mode_AOM_KF_DISABLED;
+                aom_config.kf_max_dist = 0;
             }
-            config.rc_min_quantizer = quantizer as u32;
-            config.rc_max_quantizer = quantizer as u32;
-            config.monochrome = match category {
+            aom_config.rc_min_quantizer = config.quantizer as u32;
+            aom_config.rc_max_quantizer = config.quantizer as u32;
+            aom_config.monochrome = match category {
                 Category::Color => 0,
                 Category::Alpha => 1,
                 _ => return Err(AvifError::NotImplemented),
@@ -84,7 +80,7 @@ impl Encoder for Aom {
                 aom_codec_enc_init_ver(
                     encoder_uninit.as_mut_ptr(),
                     encoder_iface,
-                    self.config.unwrap_ref() as *const aom_codec_enc_cfg,
+                    self.aom_config.unwrap_ref() as *const aom_codec_enc_cfg,
                     0,
                     AOM_ENCODER_ABI_VERSION as i32,
                 )
@@ -205,7 +201,7 @@ impl Encoder for Aom {
                 }
             }
         }
-        if is_single_image {
+        if config.is_single_image {
             self.finish()?;
             unsafe {
                 aom_codec_destroy(self.encoder.unwrap_mut() as *mut _);
