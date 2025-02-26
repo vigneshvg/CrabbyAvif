@@ -390,6 +390,11 @@ impl OStream {
         Ok(())
     }
 
+    pub(crate) fn write_ufraction(&mut self, value: UFraction) -> AvifResult<()> {
+        self.write_u32(value.0)?;
+        self.write_u32(value.1)
+    }
+
     fn start_box_impl(
         &mut self,
         box_type: &str,

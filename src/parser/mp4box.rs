@@ -275,22 +275,6 @@ pub enum ColorInformation {
     Unknown,
 }
 
-/// cbindgen:rename-all=CamelCase
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-#[repr(C)]
-pub struct PixelAspectRatio {
-    pub h_spacing: u32,
-    pub v_spacing: u32,
-}
-
-/// cbindgen:field-names=[maxCLL, maxPALL]
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ContentLightLevelInformation {
-    pub max_cll: u16,
-    pub max_pall: u16,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodecConfiguration {
     Av1(Av1CodecConfiguration),

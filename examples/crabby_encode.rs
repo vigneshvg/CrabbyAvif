@@ -19,6 +19,8 @@ use clap::Parser;
 
 use crabby_avif::encoder::*;
 use crabby_avif::image::*;
+use crabby_avif::utils::clap::CleanAperture;
+use crabby_avif::utils::UFraction;
 use crabby_avif::*;
 
 mod writer;
@@ -28,12 +30,51 @@ use writer::y4m::Y4MReader;
 use std::fs::File;
 use std::io::Write;
 
-fn depth_parser(s: &str) -> Result<u8, String> {
-    match s.parse::<u8>() {
-        Ok(8) => Ok(8),
-        Ok(16) => Ok(16),
-        _ => Err("Value must be either 8 or 16".into()),
+fn clap_parser(s: &str) -> Result<CleanAperture, String> {
+    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<i32>()).collect();
+    if values.is_err() {
+        return Err("Invalid clap string".into());
     }
+    let values: Vec<_> = values.unwrap().into_iter().map(|x| x as u32).collect();
+    if values.len() != 8 {
+        return Err("Invalid clap string. Expecting exactly 8 values.".into());
+    }
+    Ok(CleanAperture {
+        width: UFraction(values[0], values[1]),
+        height: UFraction(values[2], values[3]),
+        horiz_off: UFraction(values[4], values[5]),
+        vert_off: UFraction(values[6], values[7]),
+    })
+}
+
+fn clli_parser(s: &str) -> Result<ContentLightLevelInformation, String> {
+    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<u16>()).collect();
+    if values.is_err() {
+        return Err("Invalid clli string".into());
+    }
+    let values = values.unwrap();
+    if values.len() != 2 {
+        return Err("Invalid clli string. Expecting exactly 2 values".into());
+    }
+    Ok(ContentLightLevelInformation {
+        max_cll: values[0],
+        max_pall: values[1],
+    })
+}
+
+fn pasp_parser(s: &str) -> Result<PixelAspectRatio, String> {
+    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<u32>()).collect();
+    if values.is_err() {
+        return Err("Invalid pasp string".into());
+    }
+    let values = values.unwrap();
+    if values.len() != 2 {
+        return Err("Invalid pasp string. Expecting exactly 2 values".into());
+    }
+    Ok(PixelAspectRatio {
+        h_spacing: values[0],
+        v_spacing: values[1],
+    })
 }
 
 #[derive(Parser)]
@@ -50,12 +91,33 @@ struct CommandLineArgs {
     jobs: Option<u32>,
 
     /// Quality for color in %d..%d where %d is lossless
-    #[arg(long="qcolor", short = 'q', value_parser = value_parser!(u8).range(0..=100), default_value = "50")]
-    quality: u8,
+    #[arg(long = "qcolor", short = 'q', value_parser = value_parser!(u8).range(0..=100))]
+    quality: Option<u8>,
 
     /// Quality for color in %d..%d where %d is lossless
     #[arg(long, short = 's', value_parser = value_parser!(u8).range(0..=10), default_value = "6")]
     speed: u8,
+
+    /// Add irot property (rotation), in 0..3. Makes (90 * ANGLE) degree rotation anti-clockwise
+    #[arg(long = "irot", value_parser = value_parser!(u8).range(0..=3))]
+    irot_angle: Option<u8>,
+
+    /// Add imir property (mirroring). 0=top-to-bottom, 1=left-to-right
+    #[arg(long = "imir", value_parser = value_parser!(u8).range(0..=1))]
+    imir_axis: Option<u8>,
+
+    /// Add clap property (clean aperture). Width, Height, HOffset, VOffset (in
+    /// numerator/denominator pairs)
+    #[arg(long, value_parser = clap_parser)]
+    clap: Option<CleanAperture>,
+
+    /// Add pasp property (aspect ratio). Horizontal spacing, Vertical spacing
+    #[arg(long, value_parser = pasp_parser)]
+    pasp: Option<PixelAspectRatio>,
+
+    /// Add clli property (content light level information). MaxCLL, MaxPALL
+    #[arg(long, value_parser = clli_parser)]
+    clli: Option<ContentLightLevelInformation>,
 
     /// Input file (y4m)
     #[arg(allow_hyphen_values = false)]
@@ -316,6 +378,12 @@ fn main() {
     let args = CommandLineArgs::parse();
     let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
     let mut image = y4m.read_frame().expect("failed to read y4m frame");
+    image.irot_angle = args.irot_angle;
+    image.imir_axis = args.imir_axis;
+    image.clap = args.clap;
+    image.pasp = args.pasp;
+    image.clli = args.clli;
+
     let settings = Settings::default();
     let mut encoder = Encoder::create_with_settings(&settings);
     if y4m.has_more_frames() {
@@ -329,6 +397,9 @@ fn main() {
                 break;
             }
             image = y4m.read_frame().expect("failed to read y4m frame");
+            if frame_count == 4 {
+                break;
+            }
         }
         println!("added {frame_count} frames");
     } else {

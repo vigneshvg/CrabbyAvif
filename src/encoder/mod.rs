@@ -172,6 +172,7 @@ impl Encoder {
         }
 
         if self.items.is_empty() {
+            // TODO: validate clap.
             self.image_metadata = Image {
                 width: cell_images[0].width,
                 height: cell_images[0].height,
@@ -184,15 +185,14 @@ impl Encoder {
                 color_primaries: cell_images[0].color_primaries,
                 transfer_characteristics: cell_images[0].transfer_characteristics,
                 matrix_coefficients: cell_images[0].matrix_coefficients,
-                // TODO: Need to copy any of these?
-                // pub clli: Option<ContentLightLevelInformation>,
-                // pub pasp: Option<PixelAspectRatio>,
-                // pub clap: Option<CleanAperture>,
-                // pub irot_angle: Option<u8>,
-                // pub imir_axis: Option<u8>,
-                // pub exif: Vec<u8>,
-                // pub icc: Vec<u8>,
-                // pub xmp: Vec<u8>,
+                clli: cell_images[0].clli,
+                pasp: cell_images[0].pasp,
+                clap: cell_images[0].clap,
+                irot_angle: cell_images[0].irot_angle,
+                imir_axis: cell_images[0].imir_axis,
+                exif: cell_images[0].exif.clone(),
+                icc: cell_images[0].icc.clone(),
+                xmp: cell_images[0].xmp.clone(),
                 ..Default::default()
             };
 

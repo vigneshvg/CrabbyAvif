@@ -14,6 +14,7 @@
 
 use crate::encoder::*;
 use crate::internal_utils::stream::*;
+use crate::utils::clap::CleanAperture;
 use crate::*;
 
 #[derive(Default)]
@@ -148,6 +149,63 @@ impl Item {
         Ok(())
     }
 
+    fn write_pasp(&self, stream: &mut OStream, pasp: &PixelAspectRatio) -> AvifResult<()> {
+        stream.start_box("pasp")?;
+        // unsigned int(32) hSpacing;
+        stream.write_u32(pasp.h_spacing)?;
+        // unsigned int(32) vSpacing;
+        stream.write_u32(pasp.v_spacing)?;
+        stream.finish_box()
+    }
+
+    fn write_clli(
+        &self,
+        stream: &mut OStream,
+        clli: &ContentLightLevelInformation,
+    ) -> AvifResult<()> {
+        stream.start_box("clli")?;
+        // unsigned int(16) max_content_light_level
+        stream.write_u16(clli.max_cll)?;
+        // unsigned int(16) max_pic_average_light_level
+        stream.write_u16(clli.max_pall)?;
+        stream.finish_box()
+    }
+
+    fn write_clap(&self, stream: &mut OStream, clap: &CleanAperture) -> AvifResult<()> {
+        stream.start_box("clap")?;
+        // unsigned int(32) cleanApertureWidthN;
+        // unsigned int(32) cleanApertureWidthD;
+        stream.write_ufraction(clap.width)?;
+        // unsigned int(32) cleanApertureHeightN;
+        // unsigned int(32) cleanApertureHeightD;
+        stream.write_ufraction(clap.height)?;
+        // unsigned int(32) horizOffN;
+        // unsigned int(32) horizOffD;
+        stream.write_ufraction(clap.horiz_off)?;
+        // unsigned int(32) vertOffN;
+        // unsigned int(32) vertOffD;
+        stream.write_ufraction(clap.vert_off)?;
+        stream.finish_box()
+    }
+
+    fn write_irot(&self, stream: &mut OStream, angle: u8) -> AvifResult<()> {
+        stream.start_box("irot")?;
+        // unsigned int(6) reserved = 0;
+        stream.write_bits(0, 6)?;
+        // unsigned int(2) angle;
+        stream.write_bits(angle & 0x03, 2)?;
+        stream.finish_box()
+    }
+
+    fn write_imir(&self, stream: &mut OStream, axis: u8) -> AvifResult<()> {
+        stream.start_box("imir")?;
+        // unsigned int(7) reserved = 0;
+        stream.write_bits(0, 7)?;
+        // unsigned int(1) axis;
+        stream.write_bits(axis & 0x01, 1)?;
+        stream.finish_box()
+    }
+
     pub(crate) fn get_property_streams(
         &mut self,
         image_metadata: &Image,
@@ -176,7 +234,41 @@ impl Item {
 
         match self.category {
             Category::Color => {
-                // TODO: write color and hdr properties.
+                // Color properties.
+                // TODO: write icc.
+                // TODO: write nclx.
+                if let Some(pasp) = image_metadata.pasp {
+                    streams.push(OStream::default());
+                    self.write_pasp(streams.last_mut().unwrap(), &pasp)?;
+                    self.associations
+                        .push((u8_from_usize(streams.len())?, false));
+                }
+                // HDR properties.
+                if let Some(clli) = image_metadata.clli {
+                    streams.push(OStream::default());
+                    self.write_clli(streams.last_mut().unwrap(), &clli)?;
+                    self.associations
+                        .push((u8_from_usize(streams.len())?, false));
+                }
+                // Transformative properties.
+                if let Some(clap) = image_metadata.clap {
+                    streams.push(OStream::default());
+                    self.write_clap(streams.last_mut().unwrap(), &clap)?;
+                    self.associations
+                        .push((u8_from_usize(streams.len())?, true));
+                }
+                if let Some(angle) = image_metadata.irot_angle {
+                    streams.push(OStream::default());
+                    self.write_irot(streams.last_mut().unwrap(), angle)?;
+                    self.associations
+                        .push((u8_from_usize(streams.len())?, true));
+                }
+                if let Some(axis) = image_metadata.imir_axis {
+                    streams.push(OStream::default());
+                    self.write_imir(streams.last_mut().unwrap(), axis)?;
+                    self.associations
+                        .push((u8_from_usize(streams.len())?, true));
+                }
             }
             Category::Alpha => {
                 streams.push(OStream::default());
@@ -317,7 +409,8 @@ impl Item {
 
             self.write_codec_config(stream)?;
             if self.category == Category::Color {
-                // TODO: write color, HDR and transformative properties.
+                // TODO: write color properties.
+                // TODO: Determine if HDR and transformative properties have to be written here or not.
             }
             self.write_ccst(stream)?;
 
