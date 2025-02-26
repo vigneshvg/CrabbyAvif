@@ -1,0 +1,404 @@
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#![allow(unused)]
+
+use clap::value_parser;
+use clap::Parser;
+
+use crabby_avif::encoder::*;
+use crabby_avif::image::*;
+use crabby_avif::*;
+
+mod writer;
+
+use writer::y4m::Y4MReader;
+
+use std::fs::File;
+use std::io::Write;
+
+fn depth_parser(s: &str) -> Result<u8, String> {
+    match s.parse::<u8>() {
+        Ok(8) => Ok(8),
+        Ok(16) => Ok(16),
+        _ => Err("Value must be either 8 or 16".into()),
+    }
+}
+
+#[derive(Parser)]
+struct CommandLineArgs {
+    /// Disable strict decoding, which disables strict validation checks and errors
+    #[arg(long, default_value = "false")]
+    no_strict: bool,
+
+    /// Decode all frames and display all image information instead of saving to disk
+    #[arg(short = 'i', long, default_value = "false")]
+    info: bool,
+
+    #[arg(long, short = 'j')]
+    jobs: Option<u32>,
+
+    /// Quality for color in %d..%d where %d is lossless
+    #[arg(long="qcolor", short = 'q', value_parser = value_parser!(u8).range(0..=100), default_value = "50")]
+    quality: u8,
+
+    /// Quality for color in %d..%d where %d is lossless
+    #[arg(long, short = 's', value_parser = value_parser!(u8).range(0..=10), default_value = "6")]
+    speed: u8,
+
+    /// Input file (y4m)
+    #[arg(allow_hyphen_values = false)]
+    input_file: String,
+
+    /// Output AVIF file
+    #[arg(allow_hyphen_values = false)]
+    output_file: Option<String>,
+}
+
+/*
+fn print_data_as_columns(rows: &[(usize, &str, String)]) {
+    let rows: Vec<_> = rows
+        .iter()
+        .filter(|x| !x.1.is_empty())
+        .map(|x| (format!("{} * {}", " ".repeat(x.0 * 4), x.1), x.2.as_str()))
+        .collect();
+
+    // Calculate the maximum width for the first column.
+    let mut max_col1_width = 0;
+    for (col1, _) in &rows {
+        max_col1_width = max_col1_width.max(col1.len());
+    }
+
+    for (col1, col2) in &rows {
+        println!("{col1:<max_col1_width$} : {col2}");
+    }
+}
+
+fn print_vec(data: &[u8]) -> String {
+    if data.is_empty() {
+        format!("Absent")
+    } else {
+        format!("Present ({} bytes)", data.len())
+    }
+}
+
+fn print_image_info(decoder: &Decoder) {
+    let image = decoder.image().unwrap();
+    let mut image_data = vec![
+        (
+            0,
+            "File Format",
+            format!("{:#?}", decoder.compression_format()),
+        ),
+        (0, "Resolution", format!("{}x{}", image.width, image.height)),
+        (0, "Bit Depth", format!("{}", image.depth)),
+        (0, "Format", format!("{:#?}", image.yuv_format)),
+        if image.yuv_format == PixelFormat::Yuv420 {
+            (
+                0,
+                "Chroma Sample Position",
+                format!("{:#?}", image.chroma_sample_position),
+            )
+        } else {
+            (0, "", "".into())
+        },
+        (
+            0,
+            "Alpha",
+            format!(
+                "{}",
+                match (image.alpha_present, image.alpha_premultiplied) {
+                    (true, true) => "Premultiplied",
+                    (true, false) => "Not premultiplied",
+                    (false, _) => "Absent",
+                }
+            ),
+        ),
+        (0, "Range", format!("{:#?}", image.yuv_range)),
+        (
+            0,
+            "Color Primaries",
+            format!("{:#?}", image.color_primaries),
+        ),
+        (
+            0,
+            "Transfer Characteristics",
+            format!("{:#?}", image.transfer_characteristics),
+        ),
+        (
+            0,
+            "Matrix Coefficients",
+            format!("{:#?}", image.matrix_coefficients),
+        ),
+        (0, "ICC Profile", print_vec(&image.icc)),
+        (0, "XMP Metadata", print_vec(&image.xmp)),
+        (0, "Exif Metadata", print_vec(&image.exif)),
+    ];
+    if image.pasp.is_none()
+        && image.clap.is_none()
+        && image.irot_angle.is_none()
+        && image.imir_axis.is_none()
+    {
+        image_data.push((0, "Transformations", format!("None")));
+    } else {
+        image_data.push((0, "Transformations", format!("")));
+        if let Some(pasp) = image.pasp {
+            image_data.push((
+                1,
+                "pasp (Aspect Ratio)",
+                format!("{}/{}", pasp.h_spacing, pasp.v_spacing),
+            ));
+        }
+        if let Some(clap) = image.clap {
+            image_data.push((1, "clap (Clean Aperture)", format!("")));
+            image_data.push((2, "W", format!("{}/{}", clap.width.0, clap.width.1)));
+            image_data.push((2, "H", format!("{}/{}", clap.height.0, clap.height.1)));
+            image_data.push((
+                2,
+                "hOff",
+                format!("{}/{}", clap.horiz_off.0, clap.horiz_off.1),
+            ));
+            image_data.push((
+                2,
+                "vOff",
+                format!("{}/{}", clap.vert_off.0, clap.vert_off.1),
+            ));
+            match CropRect::create_from(&clap, image.width, image.height, image.yuv_format) {
+                Ok(rect) => image_data.extend_from_slice(&[
+                    (2, "Valid, derived crop rect", format!("")),
+                    (3, "X", format!("{}", rect.x)),
+                    (3, "Y", format!("{}", rect.y)),
+                    (3, "W", format!("{}", rect.width)),
+                    (3, "H", format!("{}", rect.height)),
+                ]),
+                Err(_) => image_data.push((2, "Invalid", format!(""))),
+            }
+        }
+        if let Some(angle) = image.irot_angle {
+            image_data.push((1, "irot (Rotation)", format!("{angle}")));
+        }
+        if let Some(axis) = image.imir_axis {
+            image_data.push((1, "imir (Mirror)", format!("{axis}")));
+        }
+    }
+    image_data.push((0, "Progressive", format!("{:#?}", image.progressive_state)));
+    if let Some(clli) = image.clli {
+        image_data.push((0, "CLLI", format!("{}, {}", clli.max_cll, clli.max_pall)));
+    }
+    if decoder.gainmap_present() {
+        let gainmap = decoder.gainmap();
+        let gainmap_image = &gainmap.image;
+        image_data.extend_from_slice(&[
+            (
+                0,
+                "Gainmap",
+                format!(
+                "{}x{} pixels, {} bit, {:#?}, {:#?} Range, Matrix Coeffs. {:#?}, Base Image is {}",
+                gainmap_image.width,
+                gainmap_image.height,
+                gainmap_image.depth,
+                gainmap_image.yuv_format,
+                gainmap_image.yuv_range,
+                gainmap_image.matrix_coefficients,
+                if gainmap.metadata.base_hdr_headroom.0 == 0 { "SDR" } else { "HDR" },
+            ),
+            ),
+            (0, "Alternate image", format!("")),
+            (
+                1,
+                "Color Primaries",
+                format!("{:#?}", gainmap.alt_color_primaries),
+            ),
+            (
+                1,
+                "Transfer Characteristics",
+                format!("{:#?}", gainmap.alt_transfer_characteristics),
+            ),
+            (
+                1,
+                "Matrix Coefficients",
+                format!("{:#?}", gainmap.alt_matrix_coefficients),
+            ),
+            (1, "ICC Profile", print_vec(&gainmap.alt_icc)),
+            (1, "Bit Depth", format!("{}", gainmap.alt_plane_depth)),
+            (1, "Planes", format!("{}", gainmap.alt_plane_count)),
+            if let Some(clli) = gainmap_image.clli {
+                (1, "CLLI", format!("{}, {}", clli.max_cll, clli.max_pall))
+            } else {
+                (1, "", "".into())
+            },
+        ])
+    } else {
+        // TODO: b/394162563 - check if we need to report the present but ignored case.
+        image_data.push((0, "Gainmap", format!("Absent")));
+    }
+    if image.image_sequence_track_present {
+        image_data.push((
+            0,
+            "Repeat Count",
+            match decoder.repetition_count() {
+                RepetitionCount::Finite(x) => format!("{x}"),
+                RepetitionCount::Infinite => format!("Infinite"),
+                RepetitionCount::Unknown => format!("Unknown"),
+            },
+        ));
+    }
+    print_data_as_columns(&image_data);
+}
+*/
+
+fn max_threads(jobs: &Option<u32>) -> u32 {
+    match jobs {
+        Some(x) => {
+            if *x == 0 {
+                match std::thread::available_parallelism() {
+                    Ok(value) => value.get() as u32,
+                    Err(_) => 1,
+                }
+            } else {
+                *x
+            }
+        }
+        None => 1,
+    }
+}
+
+/*
+#[allow(unused)]
+fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::Image> {
+    let mut reader =
+        BufReader::new(File::open(filepath).or(Err(AvifError::UnknownError("".into())))?);
+    let y_size = width * height;
+    let uv_size = ((width + 1) / 2) * ((height + 1) / 2);
+    let mut image = image::Image {
+        width,
+        height,
+        depth: 8,
+        yuv_format: PixelFormat::Yuv420,
+        yuv_range: YuvRange::Limited,
+        ..Default::default()
+    };
+    let category = Category::Color;
+    image.allocate_planes(category)?;
+    for plane in category.planes() {
+        let plane_slice = image.slice_mut(*plane)?;
+        reader
+            .read_exact(plane_slice)
+            .or(Err(AvifError::UnknownError("".into())))?;
+    }
+    if false {
+        let category = Category::Alpha;
+        image.allocate_planes(category)?;
+        for y in 0..image.height {
+            let alpha_row = image.row_mut(Plane::A, y)?;
+            for pixel in alpha_row {
+                *pixel = std::cmp::min(y, 255) as u8;
+            }
+        }
+    }
+    Ok(image)
+}
+*/
+
+#[allow(unused)]
+fn main() {
+    let args = CommandLineArgs::parse();
+    let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
+    let mut image = y4m.read_frame().expect("failed to read y4m frame");
+    let settings = Settings::default();
+    let mut encoder = Encoder::create_with_settings(&settings);
+    if y4m.has_more_frames() {
+        let mut frame_count = 0;
+        loop {
+            encoder
+                .add_image_for_sequence(&image, 1000)
+                .expect("add image failed");
+            frame_count += 1;
+            if !y4m.has_more_frames() {
+                break;
+            }
+            image = y4m.read_frame().expect("failed to read y4m frame");
+        }
+        println!("added {frame_count} frames");
+    } else {
+        encoder.add_image(&image).expect("add image failed");
+    }
+
+    let edata = encoder.finish().expect("finish failed");
+    println!("### encoded data final size: {}", edata.len());
+    match args.output_file {
+        Some(ref filepath) => {
+            let mut file = File::create(&filepath).expect("file creation failed");
+            file.write_all(&edata);
+            println!("### write output to {filepath}");
+        }
+        None => println!("### no output file provided"),
+    }
+    println!("### has more frames: {}", y4m.has_more_frames());
+    println!("### all done :)");
+    /*
+    {
+        let width = 960;
+        let height = 540;
+        println!(
+            "### encoding raw yuv({width}x{height}): {}",
+            args.input_file
+        );
+        let mut encoder: encoder::Encoder = Default::default();
+        let image_count = 20;
+        if image_count > 1 {
+            let mut images: Vec<Image> = Vec::new();
+            for _ in 0..image_count {
+                images.push(
+                    read_yuv420p(Path::new(&args.input_file), width, height)
+                        .expect("yuv reading failed"),
+                );
+                encoder
+                    .add_image_for_sequence(images.last().unwrap(), 1000)
+                    .expect("add image failed");
+            }
+        } else {
+            let grid_rows = 1;
+            let grid_columns = 1;
+            if grid_rows * grid_columns > 1 {
+                let mut images: Vec<Image> = Vec::new();
+                for _ in 0..grid_rows * grid_columns {
+                    images.push(
+                        read_yuv420p(Path::new(&args.input_file), width, height)
+                            .expect("yuv reading failed"),
+                    );
+                }
+                let image_refs: Vec<&Image> = images.iter().collect();
+                encoder
+                    .add_image_grid(grid_columns, grid_rows, &image_refs)
+                    .expect("add image failed");
+            } else {
+                let image = read_yuv420p(Path::new(&args.input_file), width, height)
+                    .expect("yuv reading failed");
+                encoder.add_image(&image).expect("add image failed");
+            }
+        }
+        let edata = encoder.finish().expect("finish failed");
+        println!("### encoded data final size: {}", edata.len());
+        match args.output_file {
+            Some(filepath) => {
+                let mut file = File::create(&filepath).expect("file creation failed");
+                file.write_all(&edata);
+                println!("### write output to {filepath}");
+            }
+            None => println!("### no output file provided"),
+        }
+    }
+    */
+}

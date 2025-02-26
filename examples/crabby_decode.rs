@@ -17,7 +17,6 @@ use clap::Parser;
 
 use crabby_avif::decoder::track::RepetitionCount;
 use crabby_avif::decoder::*;
-use crabby_avif::encoder::*;
 use crabby_avif::image::*;
 use crabby_avif::utils::clap::CropRect;
 use crabby_avif::*;
@@ -29,14 +28,11 @@ use writer::png::PngWriter;
 use writer::y4m::Y4MWriter;
 use writer::Writer;
 
-use writer::y4m::Y4MReader;
-
 use std::fs::File;
 use std::num::NonZero;
 
 use std::io::BufReader;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 
 fn depth_parser(s: &str) -> Result<u8, String> {
@@ -500,6 +496,7 @@ fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::I
 #[allow(unused)]
 fn main() {
     let args = CommandLineArgs::parse();
+    /*
     if true {
         let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
         let mut image = y4m.read_frame().expect("failed to read y4m frame");
@@ -591,6 +588,7 @@ fn main() {
         }
         return;
     }
+    */
     if let Err(err) = validate_args(&args) {
         eprintln!("ERROR: {:#?}", err);
         std::process::exit(1);
