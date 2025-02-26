@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //use crabby_avif::decoder::track::RepetitionCount;
-use crabby_avif::decoder::Category;
 use crabby_avif::decoder::CompressionFormat;
 use crabby_avif::image::*;
 //use crabby_avif::reformat::rgb;

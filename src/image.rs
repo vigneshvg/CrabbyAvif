@@ -14,7 +14,6 @@
 
 use crate::decoder::tile::Tile;
 use crate::decoder::tile::TileInfo;
-use crate::decoder::Category;
 use crate::decoder::ProgressiveState;
 use crate::internal_utils::pixels::*;
 use crate::internal_utils::*;

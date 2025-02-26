@@ -28,6 +28,7 @@ use crate::image::Image;
 use crate::parser::mp4box::CodecConfiguration;
 use crate::AndroidMediaCodecOutputColorFormat;
 use crate::AvifResult;
+use crate::Category;
 
 use std::num::NonZero;
 
@@ -42,7 +43,7 @@ pub struct DecoderConfig {
     pub image_size_limit: Option<NonZero<u32>>,
     pub max_input_size: usize,
     pub codec_config: CodecConfiguration,
-    pub category: crate::decoder::Category,
+    pub category: Category,
     pub android_mediacodec_output_color_format: AndroidMediaCodecOutputColorFormat,
 }
 
@@ -53,7 +54,7 @@ pub trait Decoder {
         av1_payload: &[u8],
         spatial_id: u8,
         image: &mut Image,
-        category: crate::decoder::Category,
+        category: Category,
     ) -> AvifResult<()>;
     // Destruction must be implemented using Drop.
 }
@@ -62,7 +63,7 @@ pub trait Encoder {
     fn encode_image(
         &mut self,
         image: &Image,
-        category: crate::encoder::Category,
+        category: Category,
         tile_rows_log2: i32,
         tile_columns_log2: i32,
         quantizer: i32,
@@ -71,4 +72,5 @@ pub trait Encoder {
         output_samples: &mut Vec<crate::encoder::Sample>,
     ) -> AvifResult<()>;
     fn finish(&mut self) -> AvifResult<()>;
+    // Destruction must be implemented using Drop.
 }

@@ -15,7 +15,6 @@
 #![allow(unused)]
 
 use crate::codecs::Encoder;
-use crate::encoder::Category;
 use crate::encoder::Sample;
 use crate::image::Image;
 use crate::image::YuvRange;
@@ -38,7 +37,7 @@ impl Encoder for Aom {
     fn encode_image(
         &mut self,
         image: &Image,
-        category: crate::encoder::Category,
+        category: Category,
         tile_rows_log2: i32,
         tile_columns_log2: i32,
         quantizer: i32,

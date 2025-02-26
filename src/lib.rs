@@ -31,6 +31,8 @@ mod codecs;
 
 mod parser;
 
+use image::*;
+
 // Workaround for https://bugs.chromium.org/p/chromium/issues/detail?id=1516634.
 #[derive(Default)]
 pub struct NonRandomHasherState;
@@ -410,3 +412,49 @@ pub(crate) use checked_decr;
 pub(crate) use checked_incr;
 pub(crate) use checked_mul;
 pub(crate) use checked_sub;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Grid {
+    pub rows: u32,
+    pub columns: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Category {
+    #[default]
+    Color,
+    Alpha,
+    Gainmap,
+}
+
+impl Category {
+    const COUNT: usize = 3;
+    const ALL: [Category; Category::COUNT] = [Self::Color, Self::Alpha, Self::Gainmap];
+    const ALL_USIZE: [usize; Category::COUNT] = [0, 1, 2];
+
+    pub(crate) fn usize(self) -> usize {
+        match self {
+            Category::Color => 0,
+            Category::Alpha => 1,
+            Category::Gainmap => 2,
+        }
+    }
+
+    pub fn planes(&self) -> &[Plane] {
+        match self {
+            Category::Alpha => &A_PLANE,
+            _ => &YUV_PLANES,
+        }
+    }
+
+    pub(crate) fn infe_name(&self) -> String {
+        match self {
+            Self::Color => "Color",
+            Self::Alpha => "Alpha",
+            Self::Gainmap => "GMap",
+        }
+        .into()
+    }
+}
