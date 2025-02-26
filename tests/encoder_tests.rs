@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//use crabby_avif::decoder::track::RepetitionCount;
 use crabby_avif::decoder::CompressionFormat;
 use crabby_avif::image::*;
-//use crabby_avif::reformat::rgb;
 use crabby_avif::*;
 
 use rand::rngs::StdRng;
@@ -61,7 +59,12 @@ fn generate_random_image(
                     *pixel = rng.gen_range(0..=255);
                 }
             } else {
-                todo!("whoa pixel depth >8");
+                let max_channel = image.max_channel();
+                let row = image.row16_mut(plane, y)?;
+                let row_slice = &mut row[..plane_data.width as usize];
+                for pixel in row_slice {
+                    *pixel = rng.gen_range(0..=max_channel);
+                }
             }
         }
     }
@@ -71,7 +74,7 @@ fn generate_random_image(
 #[test_case::test_matrix(
     [100, 121],
     [200, 107],
-    [8],
+    [8, 10, 12],
     [PixelFormat::Yuv420, PixelFormat::Yuv422, PixelFormat::Yuv444, PixelFormat::Yuv400],
     [YuvRange::Limited, YuvRange::Full],
     [false, true]

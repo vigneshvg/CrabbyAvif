@@ -99,7 +99,7 @@ impl Encoder for Aom {
             let aom_config = self.aom_config.unwrap_mut();
             aom_config.rc_end_usage = aom_rc_mode_AOM_CBR;
             aom_config.g_profile = aom_seq_profile(image, category)?;
-            aom_config.g_bit_depth = image.depth as u32;
+            aom_config.g_bit_depth = image.depth as _;
             aom_config.g_w = image.width;
             aom_config.g_h = image.height;
 
@@ -120,12 +120,14 @@ impl Encoder for Aom {
                     encoder_uninit.as_mut_ptr(),
                     encoder_iface,
                     self.aom_config.unwrap_ref() as *const aom_codec_enc_cfg,
-                    0,
-                    AOM_ENCODER_ABI_VERSION as i32,
+                    if image.depth > 8 { AOM_CODEC_USE_HIGHBITDEPTH } else { 0 } as _,
+                    AOM_ENCODER_ABI_VERSION as _,
                 )
             };
             if err != aom_codec_err_t_AOM_CODEC_OK {
-                return Err(AvifError::UnknownError("".into()));
+                return Err(AvifError::UnknownError(format!(
+                    "aom_codec_enc_init failed. err: {err}"
+                )));
             }
             self.encoder = Some(unsafe { encoder_uninit.assume_init() });
 
@@ -176,6 +178,7 @@ impl Encoder for Aom {
         aom_image.bps = aom_bps(aom_image.fmt);
         aom_image.x_chroma_shift = image.yuv_format.chroma_shift_x().0;
         aom_image.y_chroma_shift = image.yuv_format.chroma_shift_y();
+        println!("### here 2");
         match category {
             Category::Color => {
                 aom_image.range = image.yuv_range as u32;
@@ -183,12 +186,12 @@ impl Encoder for Aom {
                     aom_image.monochrome = 1;
                     aom_image.x_chroma_shift = 1;
                     aom_image.y_chroma_shift = 1;
-                    aom_image.planes[0] = image.planes[0].unwrap_ref().ptr() as *mut u8;
+                    aom_image.planes[0] = image.planes[0].unwrap_ref().ptr_generic() as *mut _;
                     aom_image.stride[0] = image.row_bytes[0] as i32;
                 } else {
                     aom_image.monochrome = 0;
-                    for i in 0..3 {
-                        aom_image.planes[i] = image.planes[i].unwrap_ref().ptr() as *mut u8;
+                    for i in 0..=2 {
+                        aom_image.planes[i] = image.planes[i].unwrap_ref().ptr_generic() as *mut _;
                         aom_image.stride[i] = image.row_bytes[i] as i32;
                     }
                 }
@@ -198,7 +201,7 @@ impl Encoder for Aom {
                 aom_image.monochrome = 1;
                 aom_image.x_chroma_shift = 1;
                 aom_image.y_chroma_shift = 1;
-                aom_image.planes[0] = image.planes[3].unwrap_ref().ptr() as *mut u8;
+                aom_image.planes[0] = image.planes[3].unwrap_ref().ptr_generic() as *mut _;
                 aom_image.stride[0] = image.row_bytes[3] as i32;
             }
             _ => return Err(AvifError::NotImplemented),
