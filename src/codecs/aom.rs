@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![allow(unused)]
+#![allow(non_upper_case_globals)]
 
 use crate::codecs::*;
 use crate::encoder::Sample;
@@ -32,6 +33,48 @@ pub struct Aom {
 }
 
 const AOM_CODEC_OK: u32 = 0;
+
+fn aom_format(image: &Image, category: Category) -> AvifResult<aom_img_fmt_t> {
+    let format = match category {
+        Category::Alpha => aom_img_fmt_AOM_IMG_FMT_I420,
+        _ => match image.yuv_format {
+            PixelFormat::Yuv420 | PixelFormat::Yuv400 => aom_img_fmt_AOM_IMG_FMT_I420,
+            PixelFormat::Yuv422 => aom_img_fmt_AOM_IMG_FMT_I422,
+            PixelFormat::Yuv444 => aom_img_fmt_AOM_IMG_FMT_I444,
+            _ => return Err(AvifError::InvalidArgument),
+        },
+    };
+    Ok(if image.depth > 8 { format | AOM_IMG_FMT_HIGHBITDEPTH } else { format })
+}
+
+fn aom_bps(format: aom_img_fmt_t) -> i32 {
+    match format {
+        aom_img_fmt_AOM_IMG_FMT_I420 => 12,
+        aom_img_fmt_AOM_IMG_FMT_I422 => 16,
+        aom_img_fmt_AOM_IMG_FMT_I444 => 24,
+        aom_img_fmt_AOM_IMG_FMT_I42016 => 24,
+        aom_img_fmt_AOM_IMG_FMT_I42216 => 32,
+        aom_img_fmt_AOM_IMG_FMT_I44416 => 48,
+        _ => 16,
+    }
+}
+
+fn aom_seq_profile(image: &Image, category: Category) -> AvifResult<u32> {
+    if image.depth == 12 {
+        // 12 bit is always profile 2.
+        return Ok(2);
+    }
+    if category == Category::Alpha {
+        // Alpha is monochrome, so it is always profile 0.
+        return Ok(0);
+    }
+    match image.yuv_format {
+        PixelFormat::Yuv420 | PixelFormat::Yuv400 => Ok(0),
+        PixelFormat::Yuv422 => Ok(2),
+        PixelFormat::Yuv444 => Ok(1),
+        _ => Err(AvifError::InvalidArgument),
+    }
+}
 
 impl Encoder for Aom {
     fn encode_image(
@@ -55,8 +98,7 @@ impl Encoder for Aom {
             self.aom_config = Some(unsafe { cfg_uninit.assume_init() });
             let aom_config = self.aom_config.unwrap_mut();
             aom_config.rc_end_usage = aom_rc_mode_AOM_CBR;
-            // TODO: handle 444 here.
-            aom_config.g_profile = 0;
+            aom_config.g_profile = aom_seq_profile(image, category)?;
             aom_config.g_bit_depth = image.depth as u32;
             aom_config.g_w = image.width;
             aom_config.g_h = image.height;
@@ -69,11 +111,8 @@ impl Encoder for Aom {
             }
             aom_config.rc_min_quantizer = config.quantizer as u32;
             aom_config.rc_max_quantizer = config.quantizer as u32;
-            aom_config.monochrome = match category {
-                Category::Color => 0,
-                Category::Alpha => 1,
-                _ => return Err(AvifError::NotImplemented),
-            };
+            aom_config.monochrome =
+                (category == Category::Alpha || image.yuv_format == PixelFormat::Yuv400).into();
 
             let mut encoder_uninit: MaybeUninit<aom_codec_ctx_t> = MaybeUninit::uninit();
             let err = unsafe {
@@ -127,27 +166,31 @@ impl Encoder for Aom {
                 _ => todo!("not implemented"),
             }
         }
-        println!("### here 2");
         let mut aom_image: aom_image_t = unsafe { std::mem::zeroed() };
-        aom_image.fmt = match image.yuv_format {
-            PixelFormat::Yuv444 => aom_img_fmt_AOM_IMG_FMT_I444,
-            _ => aom_img_fmt_AOM_IMG_FMT_I420,
-        };
+        aom_image.fmt = aom_format(image, category)?;
         aom_image.bit_depth = if image.depth > 8 { 16 } else { 8 };
         aom_image.w = image.width;
         aom_image.h = image.height;
         aom_image.d_w = image.width;
         aom_image.d_h = image.height;
-        aom_image.bps = 12;
+        aom_image.bps = aom_bps(aom_image.fmt);
         aom_image.x_chroma_shift = image.yuv_format.chroma_shift_x().0;
         aom_image.y_chroma_shift = image.yuv_format.chroma_shift_y();
         match category {
             Category::Color => {
                 aom_image.range = image.yuv_range as u32;
-                aom_image.monochrome = 0;
-                for i in 0..3 {
-                    aom_image.planes[i] = image.planes[i].unwrap_ref().ptr() as *mut u8;
-                    aom_image.stride[i] = image.row_bytes[i] as i32;
+                if image.yuv_format == PixelFormat::Yuv400 {
+                    aom_image.monochrome = 1;
+                    aom_image.x_chroma_shift = 1;
+                    aom_image.y_chroma_shift = 1;
+                    aom_image.planes[0] = image.planes[0].unwrap_ref().ptr() as *mut u8;
+                    aom_image.stride[0] = image.row_bytes[0] as i32;
+                } else {
+                    aom_image.monochrome = 0;
+                    for i in 0..3 {
+                        aom_image.planes[i] = image.planes[i].unwrap_ref().ptr() as *mut u8;
+                        aom_image.stride[i] = image.row_bytes[i] as i32;
+                    }
                 }
             }
             Category::Alpha => {

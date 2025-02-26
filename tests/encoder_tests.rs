@@ -71,7 +71,7 @@ fn generate_random_image(
 #[test_case::test_matrix(
     [100, 121],
     [200, 107],
-    [8, 10, 12],
+    [8],
     [PixelFormat::Yuv420, PixelFormat::Yuv422, PixelFormat::Yuv444, PixelFormat::Yuv400],
     [YuvRange::Limited, YuvRange::Full],
     [false, true]
@@ -85,9 +85,6 @@ fn encode_decode(
     alpha: bool,
 ) -> AvifResult<()> {
     if !HAS_ENCODER {
-        return Ok(());
-    }
-    if depth > 8 || !matches!(yuv_format, PixelFormat::Yuv420) {
         return Ok(());
     }
     let input_image = generate_random_image(width, height, depth, yuv_format, yuv_range, alpha)?;
