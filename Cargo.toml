@@ -38,7 +38,7 @@ bindgen = "0.69.1"
 cbindgen = "0.26.0"
 
 [features]
-default = ["dav1d", "libyuv", "aom"]
+default = ["dav1d", "libyuv"]
 capi = []
 dav1d = ["dep:libc", "dep:dav1d-sys"]
 libgav1 = ["dep:libgav1-sys"]

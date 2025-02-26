@@ -590,6 +590,7 @@ impl Encoder {
                 category,
                 dimg_from_id: if cell_count > 1 { Some(top_level_item_id) } else { None },
                 hidden_image: cell_count > 1,
+                #[cfg(feature = "aom")]
                 codec: Some(Box::<Aom>::default()),
                 ..Default::default()
             };
