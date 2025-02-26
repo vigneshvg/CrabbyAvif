@@ -60,6 +60,7 @@ impl Encoder for Aom {
             self.config = Some(unsafe { cfg_uninit.assume_init() });
             let config = self.config.unwrap_mut();
             config.rc_end_usage = aom_rc_mode_AOM_CBR;
+            // TODO: handle 444 here.
             config.g_profile = 0;
             config.g_bit_depth = image.depth as u32;
             config.g_w = image.width;
@@ -133,15 +134,18 @@ impl Encoder for Aom {
         }
         println!("### here 2");
         let mut aom_image: aom_image_t = unsafe { std::mem::zeroed() };
-        aom_image.fmt = aom_img_fmt_AOM_IMG_FMT_I420;
+        aom_image.fmt = match image.yuv_format {
+            PixelFormat::Yuv444 => aom_img_fmt_AOM_IMG_FMT_I444,
+            _ => aom_img_fmt_AOM_IMG_FMT_I420,
+        };
         aom_image.bit_depth = if image.depth > 8 { 16 } else { 8 };
         aom_image.w = image.width;
         aom_image.h = image.height;
         aom_image.d_w = image.width;
         aom_image.d_h = image.height;
         aom_image.bps = 12;
-        aom_image.x_chroma_shift = 1;
-        aom_image.y_chroma_shift = 1;
+        aom_image.x_chroma_shift = image.yuv_format.chroma_shift_x().0;
+        aom_image.y_chroma_shift = image.yuv_format.chroma_shift_y();
         match category {
             Category::Color => {
                 aom_image.range = image.yuv_range as u32;
@@ -154,6 +158,8 @@ impl Encoder for Aom {
             Category::Alpha => {
                 aom_image.range = aom_color_range_AOM_CR_FULL_RANGE;
                 aom_image.monochrome = 1;
+                aom_image.x_chroma_shift = 1;
+                aom_image.y_chroma_shift = 1;
                 aom_image.planes[0] = image.planes[3].unwrap_ref().ptr() as *mut u8;
                 aom_image.stride[0] = image.row_bytes[3] as i32;
             }
@@ -175,7 +181,7 @@ impl Encoder for Aom {
             )
         };
         if err != aom_codec_err_t_AOM_CODEC_OK {
-            return Err(AvifError::UnknownError("".into()));
+            return Err(AvifError::UnknownError(format!("err: {err}")));
         }
         println!("### im here 3");
         let mut iter: aom_codec_iter_t = std::ptr::null_mut();

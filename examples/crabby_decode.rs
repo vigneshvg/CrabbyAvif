@@ -28,6 +28,8 @@ use writer::png::PngWriter;
 use writer::y4m::Y4MWriter;
 use writer::Writer;
 
+use writer::y4m::Y4MReader;
+
 use std::fs::File;
 use std::num::NonZero;
 
@@ -498,55 +500,92 @@ fn read_yuv420p(filepath: &Path, width: u32, height: u32) -> AvifResult<image::I
 fn main() {
     let args = CommandLineArgs::parse();
     if true {
-        let width = 960;
-        let height = 540;
-        println!(
-            "### encoding raw yuv({width}x{height}): {}",
-            args.input_file
-        );
+        let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
+        let mut image = y4m.read_frame().expect("failed to read y4m frame");
         let mut encoder: encoder::Encoder = Default::default();
-        let image_count = 20;
-        if image_count > 1 {
-            let mut images: Vec<Image> = Vec::new();
-            for _ in 0..image_count {
-                images.push(
-                    read_yuv420p(Path::new(&args.input_file), width, height)
-                        .expect("yuv reading failed"),
-                );
+        if y4m.has_more_frames() {
+            let mut frame_count = 0;
+            loop {
                 encoder
-                    .add_image_for_sequence(images.last().unwrap(), 1000)
+                    .add_image_for_sequence(&image, 1000)
                     .expect("add image failed");
-            }
-        } else {
-            let grid_rows = 1;
-            let grid_columns = 1;
-            if grid_rows * grid_columns > 1 {
-                let mut images: Vec<Image> = Vec::new();
-                for _ in 0..grid_rows * grid_columns {
-                    images.push(
-                        read_yuv420p(Path::new(&args.input_file), width, height)
-                            .expect("yuv reading failed"),
-                    );
+                frame_count += 1;
+                if !y4m.has_more_frames() {
+                    break;
                 }
-                let image_refs: Vec<&Image> = images.iter().collect();
-                encoder
-                    .add_image_grid(grid_columns, grid_rows, &image_refs)
-                    .expect("add image failed");
-            } else {
-                let image = read_yuv420p(Path::new(&args.input_file), width, height)
-                    .expect("yuv reading failed");
-                encoder.add_image(&image).expect("add image failed");
+                image = y4m.read_frame().expect("failed to read y4m frame");
             }
+            println!("added {frame_count} frames");
+        } else {
+            encoder.add_image(&image).expect("add image failed");
         }
+
         let edata = encoder.finish().expect("finish failed");
         println!("### encoded data final size: {}", edata.len());
         match args.output_file {
-            Some(filepath) => {
+            Some(ref filepath) => {
                 let mut file = File::create(&filepath).expect("file creation failed");
                 file.write_all(&edata);
                 println!("### write output to {filepath}");
             }
             None => println!("### no output file provided"),
+        }
+        println!("### has more frames: {}", y4m.has_more_frames());
+        if true {
+            println!("### all done :)");
+            return;
+        }
+        {
+            let width = 960;
+            let height = 540;
+            println!(
+                "### encoding raw yuv({width}x{height}): {}",
+                args.input_file
+            );
+            let mut encoder: encoder::Encoder = Default::default();
+            let image_count = 20;
+            if image_count > 1 {
+                let mut images: Vec<Image> = Vec::new();
+                for _ in 0..image_count {
+                    images.push(
+                        read_yuv420p(Path::new(&args.input_file), width, height)
+                            .expect("yuv reading failed"),
+                    );
+                    encoder
+                        .add_image_for_sequence(images.last().unwrap(), 1000)
+                        .expect("add image failed");
+                }
+            } else {
+                let grid_rows = 1;
+                let grid_columns = 1;
+                if grid_rows * grid_columns > 1 {
+                    let mut images: Vec<Image> = Vec::new();
+                    for _ in 0..grid_rows * grid_columns {
+                        images.push(
+                            read_yuv420p(Path::new(&args.input_file), width, height)
+                                .expect("yuv reading failed"),
+                        );
+                    }
+                    let image_refs: Vec<&Image> = images.iter().collect();
+                    encoder
+                        .add_image_grid(grid_columns, grid_rows, &image_refs)
+                        .expect("add image failed");
+                } else {
+                    let image = read_yuv420p(Path::new(&args.input_file), width, height)
+                        .expect("yuv reading failed");
+                    encoder.add_image(&image).expect("add image failed");
+                }
+            }
+            let edata = encoder.finish().expect("finish failed");
+            println!("### encoded data final size: {}", edata.len());
+            match args.output_file {
+                Some(filepath) => {
+                    let mut file = File::create(&filepath).expect("file creation failed");
+                    file.write_all(&edata);
+                    println!("### write output to {filepath}");
+                }
+                None => println!("### no output file provided"),
+            }
         }
         return;
     }

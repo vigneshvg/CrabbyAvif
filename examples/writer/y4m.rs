@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(unused)]
+
 #[allow(unused_imports)]
 use crate::image::*;
 use crate::*;
@@ -20,6 +22,12 @@ use std::fs::File;
 use std::io::prelude::*;
 
 use super::Writer;
+use std::num::NonZero;
+
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+use std::path::Path;
 
 #[derive(Default)]
 pub(crate) struct Y4MWriter {
@@ -139,5 +147,153 @@ impl Writer for Y4MWriter {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Y4MReader {
+    width: u32,
+    height: u32,
+    depth: u8,
+    has_alpha: bool,
+    format: PixelFormat,
+    range: YuvRange,
+    chroma_sample_position: ChromaSamplePosition,
+    reader: Option<BufReader<File>>,
+}
+
+impl Y4MReader {
+    fn parse_colorspace(&mut self, colorspace: &str) -> AvifResult<()> {
+        (
+            self.depth,
+            self.format,
+            self.chroma_sample_position,
+            self.has_alpha,
+        ) = match colorspace {
+            "420jpeg" => (
+                8,
+                PixelFormat::Yuv420,
+                ChromaSamplePosition::default(),
+                false,
+            ),
+            "444" => (
+                8,
+                PixelFormat::Yuv444,
+                ChromaSamplePosition::default(),
+                false,
+            ),
+            _ => return Err(AvifError::UnknownError("invalid colorspace string".into())),
+        };
+        Ok(())
+    }
+
+    pub(crate) fn create(filename: &str) -> AvifResult<Y4MReader> {
+        let mut reader = BufReader::new(File::open(filename).or(Err(AvifError::UnknownError(
+            "error opening input file".into(),
+        )))?);
+        let mut y4m_line = String::new();
+        let bytes_read = reader
+            .read_line(&mut y4m_line)
+            .or(Err(AvifError::UnknownError(
+                "error reading y4m line".into(),
+            )))?;
+        if bytes_read == 0 {
+            return Err(AvifError::UnknownError("no bytes in y4m line".into()));
+        }
+        y4m_line.pop();
+        let parts: Vec<&str> = y4m_line.split(" ").collect();
+        if parts[0] != "YUV4MPEG2" {
+            return Err(AvifError::UnknownError("Not a Y4M file".into()));
+        }
+        let mut y4m = Y4MReader {
+            range: YuvRange::Limited,
+            ..Default::default()
+        };
+        for part in parts[1..].iter() {
+            match part.get(0..1).unwrap_or("") {
+                "W" => y4m.width = part[1..].parse::<u32>().unwrap_or(0),
+                "H" => y4m.height = part[1..].parse::<u32>().unwrap_or(0),
+                "C" => y4m.parse_colorspace(&part[1..])?,
+                "F" => {
+                    // TODO: Handle frame rate.
+                }
+                "X" => {
+                    if part[1..] == *"COLORRANGE=FULL" {
+                        y4m.range = YuvRange::Full;
+                    }
+                }
+                _ => {}
+            }
+        }
+        println!("### y4m: {:#?}", y4m);
+        if y4m.width == 0 || y4m.height == 0 || y4m.depth == 0 {
+            return Err(AvifError::InvalidArgument);
+        }
+        y4m.reader = Some(reader);
+        Ok(y4m)
+    }
+
+    pub(crate) fn read_frame(&mut self) -> AvifResult<Image> {
+        const FRAME_MARKER: &str = "FRAME";
+        let mut frame_marker = String::new();
+        let bytes_read = self
+            .reader
+            .as_mut()
+            .unwrap()
+            .read_line(&mut frame_marker)
+            .or(Err(AvifError::UnknownError(
+                "could not read frame marker".into(),
+            )))?;
+        if bytes_read == 0 {
+            return Err(AvifError::UnknownError(
+                "could not read frame marker".into(),
+            ));
+        }
+        frame_marker.pop();
+        if frame_marker != FRAME_MARKER {
+            return Err(AvifError::UnknownError(
+                "could not find frame marker".into(),
+            ));
+        }
+        let mut image = image::Image {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            yuv_format: self.format,
+            yuv_range: self.range,
+            chroma_sample_position: self.chroma_sample_position,
+            ..Default::default()
+        };
+        image.allocate_planes(Category::Color)?;
+        if self.has_alpha {
+            image.allocate_planes(Category::Alpha)?;
+        }
+        let reader = self.reader.as_mut().unwrap();
+        for plane in ALL_PLANES {
+            if !image.has_plane(plane) {
+                continue;
+            }
+            let plane_data = image.plane_data(plane).unwrap();
+            for y in 0..plane_data.height {
+                if self.depth == 8 {
+                    let row = image.row_mut(plane, y)?;
+                    let row_slice = &mut row[..plane_data.width as usize];
+                    reader
+                        .read_exact(row_slice)
+                        .or(Err(AvifError::UnknownError("".into())))?;
+                } else {
+                    todo!("handle >8 bit input");
+                }
+            }
+        }
+        Ok(image)
+    }
+
+    pub(crate) fn has_more_frames(&mut self) -> bool {
+        let buffer = match self.reader.as_mut().unwrap().fill_buf() {
+            Ok(buffer) => buffer,
+            Err(_) => return false,
+        };
+        !buffer.is_empty()
     }
 }
