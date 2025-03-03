@@ -391,7 +391,7 @@ impl Encoder {
     pub(crate) fn write_mdat(&self, stream: &mut OStream) -> AvifResult<()> {
         stream.start_box("mdat")?;
         let mdat_start_offset = stream.offset();
-        let mut layered_color_item_ids = Vec::new();
+        let mut layered_item_ids = [Vec::new(), Vec::new()];
         // Use multiple passes to pack the items in the following order:
         //   * Pass 0: metadata (Exif/XMP/gain map metadata)
         //   * Pass 1: alpha, gain map image (AV1)
@@ -420,7 +420,9 @@ impl Encoder {
                 }
                 if self.settings.extra_layer_count > 0 && !item.samples.is_empty() {
                     if item.category == Category::Color {
-                        layered_color_item_ids.push(item.id);
+                        layered_item_ids[1].push(item.id);
+                    } else if item.category == Category::Alpha {
+                        layered_item_ids[0].push(item.id);
                     }
                     continue;
                 }
@@ -446,13 +448,16 @@ impl Encoder {
                 }
             }
         }
-        // TODO: understand and simplify this code.
-        if !layered_color_item_ids.is_empty() {
+        // TODO: simplify this code.
+        for layered_item_id in &layered_item_ids {
+            if layered_item_id.is_empty() {
+                continue;
+            }
             let mut layer_index = 0;
             loop {
                 let mut has_more_samples = false;
-                for color_item_id in &layered_color_item_ids {
-                    let item = &self.items[*color_item_id as usize - 1];
+                for item_id in layered_item_id {
+                    let item = &self.items[*item_id as usize - 1];
 
                     if item.samples.len() <= layer_index {
                         // Already written all samples for this item.
