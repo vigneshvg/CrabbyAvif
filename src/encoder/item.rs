@@ -149,6 +149,26 @@ impl Item {
         Ok(())
     }
 
+    fn write_nclx(&self, stream: &mut OStream, image_metadata: &Image) -> AvifResult<()> {
+        stream.start_box("colr")?;
+        // unsigned int(32) colour_type;
+        stream.write_str("nclx")?;
+        // unsigned int(16) colour_primaries;
+        stream.write_u16(image_metadata.color_primaries as u16)?;
+        // unsigned int(16) transfer_characteristics;
+        stream.write_u16(image_metadata.transfer_characteristics as u16)?;
+        // unsigned int(16) matrix_coefficients;
+        stream.write_u16(image_metadata.matrix_coefficients as u16)?;
+        // unsigned int(1) full_range_flag;
+        stream.write_bits(
+            if image_metadata.yuv_range == YuvRange::Full { 1 } else { 0 },
+            1,
+        )?;
+        // unsigned int(7) reserved = 0;
+        stream.write_bits(0, 7)?;
+        stream.finish_box()
+    }
+
     fn write_pasp(&self, stream: &mut OStream, pasp: &PixelAspectRatio) -> AvifResult<()> {
         stream.start_box("pasp")?;
         // unsigned int(32) hSpacing;
@@ -236,7 +256,10 @@ impl Item {
             Category::Color => {
                 // Color properties.
                 // TODO: write icc.
-                // TODO: write nclx.
+                streams.push(OStream::default());
+                self.write_nclx(streams.last_mut().unwrap(), image_metadata)?;
+                self.associations
+                    .push((u8_from_usize(streams.len())?, false));
                 if let Some(pasp) = image_metadata.pasp {
                     streams.push(OStream::default());
                     self.write_pasp(streams.last_mut().unwrap(), &pasp)?;
@@ -409,7 +432,8 @@ impl Item {
 
             self.write_codec_config(stream)?;
             if self.category == Category::Color {
-                // TODO: write color properties.
+                // TODO: write icc.
+                self.write_nclx(stream, image_metadata)?;
                 // TODO: Determine if HDR and transformative properties have to be written here or not.
             }
             self.write_ccst(stream)?;

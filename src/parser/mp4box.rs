@@ -260,14 +260,6 @@ impl CodecConfiguration {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Nclx {
-    pub color_primaries: ColorPrimaries,
-    pub transfer_characteristics: TransferCharacteristics,
-    pub matrix_coefficients: MatrixCoefficients,
-    pub yuv_range: YuvRange,
-}
-
 #[derive(Clone, Debug)]
 pub enum ColorInformation {
     Icc(Vec<u8>),

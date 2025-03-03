@@ -30,15 +30,29 @@ use writer::y4m::Y4MReader;
 use std::fs::File;
 use std::io::Write;
 
+macro_rules! split_and_check_count {
+    ($parameter: literal, $input:ident, $delimiter:literal, $count:literal, $type:ty) => {{
+        let values: Result<Vec<_>, _> = $input
+            .split($delimiter)
+            .map(|x| x.parse::<$type>())
+            .collect();
+        if values.is_err() {
+            return Err(format!("Invalid {} string", $parameter));
+        }
+        let values = values.unwrap();
+        if values.len() != $count {
+            return Err(format!(
+                "Invalid {} string. Expecting exactly {} values separated with a \"{}\"",
+                $parameter, $count, $delimiter
+            ));
+        }
+        values
+    }};
+}
+
 fn clap_parser(s: &str) -> Result<CleanAperture, String> {
-    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<i32>()).collect();
-    if values.is_err() {
-        return Err("Invalid clap string".into());
-    }
-    let values: Vec<_> = values.unwrap().into_iter().map(|x| x as u32).collect();
-    if values.len() != 8 {
-        return Err("Invalid clap string. Expecting exactly 8 values.".into());
-    }
+    let values = split_and_check_count!("clap", s, ",", 8, i32);
+    let values: Vec<_> = values.into_iter().map(|x| x as u32).collect();
     Ok(CleanAperture {
         width: UFraction(values[0], values[1]),
         height: UFraction(values[2], values[3]),
@@ -48,14 +62,7 @@ fn clap_parser(s: &str) -> Result<CleanAperture, String> {
 }
 
 fn clli_parser(s: &str) -> Result<ContentLightLevelInformation, String> {
-    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<u16>()).collect();
-    if values.is_err() {
-        return Err("Invalid clli string".into());
-    }
-    let values = values.unwrap();
-    if values.len() != 2 {
-        return Err("Invalid clli string. Expecting exactly 2 values".into());
-    }
+    let values = split_and_check_count!("clli", s, ",", 2, u16);
     Ok(ContentLightLevelInformation {
         max_cll: values[0],
         max_pall: values[1],
@@ -63,17 +70,20 @@ fn clli_parser(s: &str) -> Result<ContentLightLevelInformation, String> {
 }
 
 fn pasp_parser(s: &str) -> Result<PixelAspectRatio, String> {
-    let values: Result<Vec<_>, _> = s.split(",").map(|x| x.parse::<u32>()).collect();
-    if values.is_err() {
-        return Err("Invalid pasp string".into());
-    }
-    let values = values.unwrap();
-    if values.len() != 2 {
-        return Err("Invalid pasp string. Expecting exactly 2 values".into());
-    }
+    let values = split_and_check_count!("pasp", s, ",", 2, u32);
     Ok(PixelAspectRatio {
         h_spacing: values[0],
         v_spacing: values[1],
+    })
+}
+
+fn cicp_parser(s: &str) -> Result<Nclx, String> {
+    let values = split_and_check_count!("cicp", s, "/", 3, u16);
+    Ok(Nclx {
+        color_primaries: values[0].into(),
+        transfer_characteristics: values[1].into(),
+        matrix_coefficients: values[2].into(),
+        ..Default::default()
     })
 }
 
@@ -118,6 +128,10 @@ struct CommandLineArgs {
     /// Add clli property (content light level information). MaxCLL, MaxPALL
     #[arg(long, value_parser = clli_parser)]
     clli: Option<ContentLightLevelInformation>,
+
+    /// Set CICP values (nclx colr box) (P/T/M 3 raw numbers, use -r to set range flag)
+    #[arg(long, value_parser = cicp_parser)]
+    cicp: Option<Nclx>,
 
     /// Input file (y4m)
     #[arg(allow_hyphen_values = false)]
@@ -378,11 +392,17 @@ fn main() {
     let args = CommandLineArgs::parse();
     let mut y4m = Y4MReader::create(&args.input_file).expect("failed to create y4m reader");
     let mut image = y4m.read_frame().expect("failed to read y4m frame");
+
     image.irot_angle = args.irot_angle;
     image.imir_axis = args.imir_axis;
     image.clap = args.clap;
     image.pasp = args.pasp;
     image.clli = args.clli;
+    if let Some(nclx) = args.cicp {
+        image.color_primaries = nclx.color_primaries;
+        image.transfer_characteristics = nclx.transfer_characteristics;
+        image.matrix_coefficients = nclx.matrix_coefficients;
+    }
 
     let settings = Settings::default();
     let mut encoder = Encoder::create_with_settings(&settings);
