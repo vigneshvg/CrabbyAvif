@@ -296,8 +296,13 @@ impl Encoder {
         if grid_columns == 0 || grid_columns > 256 || grid_rows == 0 || grid_rows > 256 {
             return Err(AvifError::InvalidImageGrid("".into()));
         }
-        // TODO: if layer count is zero, set single image flag here.
-        self.add_image_impl(grid_columns, grid_rows, images, 0, true)
+        self.add_image_impl(
+            grid_columns,
+            grid_rows,
+            images,
+            0,
+            self.settings.extra_layer_count == 0,
+        )
     }
 
     #[allow(unused)]

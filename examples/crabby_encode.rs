@@ -435,6 +435,31 @@ fn main() {
             }
         }
         println!("added {frame_count} frames");
+    } else if true {
+        let grid_rows = 1;
+        let grid_columns = 2;
+        let mut images = Vec::new();
+        for _ in 0..grid_rows * grid_columns {
+            images.push(&image);
+        }
+        if args.progressive {
+            // Encode the base layer with very low quality.
+            settings.quality = 2;
+            encoder.update_settings(&settings);
+            encoder
+                .add_image_grid(grid_columns, grid_rows, &images)
+                .expect("add image failed");
+            // Encode the second layer with the requested quality.
+            settings.quality = args.quality.unwrap_or(60) as i32;
+            encoder.update_settings(&settings);
+            encoder
+                .add_image_grid(grid_columns, grid_rows, &images)
+                .expect("add image failed");
+        } else {
+            encoder
+                .add_image_grid(grid_columns, grid_rows, &images)
+                .expect("add image failed");
+        }
     } else {
         if args.progressive {
             // Encode the base layer with very low quality.
