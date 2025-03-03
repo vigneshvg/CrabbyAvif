@@ -17,8 +17,6 @@ use crate::*;
 
 use std::num::NonZero;
 
-pub const MAX_AV1_LAYER_COUNT: usize = 4;
-
 #[derive(Debug, Default)]
 pub struct DecodeSample {
     pub item_id: u32, // 1-based. 0 if it comes from a track.
@@ -166,7 +164,8 @@ impl Tile {
                     // >= instead of > because there must be room for the last layer
                     if a1lx[i] >= remaining_size {
                         return Err(AvifError::BmffParseFailed(format!(
-                            "a1lx layer index [{i}] does not fit in item size"
+                            "a1lx layer index [{i}] does not fit in item size ({} vs {})",
+                            a1lx[i], remaining_size
                         )));
                     }
                     layer_sizes[i] = a1lx[i];

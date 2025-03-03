@@ -482,3 +482,5 @@ pub struct Nclx {
     pub matrix_coefficients: MatrixCoefficients,
     pub yuv_range: YuvRange,
 }
+
+pub const MAX_AV1_LAYER_COUNT: usize = 4;

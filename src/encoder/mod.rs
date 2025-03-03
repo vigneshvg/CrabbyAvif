@@ -42,6 +42,7 @@ pub struct Settings {
     pub keyframe_interval: i32,
     pub timescale: u64,
     pub repetition_count: i32,
+    pub extra_layer_count: u32,
     // changeable.
     pub quality: i32,
     pub min_quantizer: i32,
@@ -101,15 +102,20 @@ const UNITY_MATRIX: [u8; 9 * 4] = [
 ];
 
 impl Encoder {
-    pub fn create_with_settings(settings: &Settings) -> Self {
-        Self {
+    pub fn create_with_settings(settings: &Settings) -> AvifResult<Self> {
+        if settings.extra_layer_count >= MAX_AV1_LAYER_COUNT as u32 {
+            return Err(AvifError::InvalidArgument);
+        }
+        Ok(Self {
             settings: *settings,
             ..Default::default()
-        }
+        })
     }
 
-    pub fn update_settings(&mut self, settings: &Settings) {
+    pub fn update_settings(&mut self, settings: &Settings) -> AvifResult<()> {
+        // TODO: validate that only fields that are allowed update are updated.
         self.settings = *settings;
+        Ok(())
     }
 
     fn add_items(&mut self, grid: &Grid, category: Category) -> AvifResult<u16> {
@@ -141,6 +147,7 @@ impl Encoder {
                 category,
                 dimg_from_id: if cell_count > 1 { Some(top_level_item_id) } else { None },
                 hidden_image: cell_count > 1,
+                extra_layer_count: self.settings.extra_layer_count,
                 #[cfg(feature = "aom")]
                 codec: Some(Box::<Aom>::default()),
                 ..Default::default()
@@ -161,7 +168,6 @@ impl Encoder {
         mut duration: u32,
         is_single_image: bool,
     ) -> AvifResult<()> {
-        // TODO: validate layer count.
         let cell_count: usize = usize_from_u32(grid_rows * grid_columns)?;
         if cell_count == 0 || cell_images.len() != cell_count {
             return Err(AvifError::InvalidArgument);
@@ -227,7 +233,13 @@ impl Encoder {
             // TODO: exif, xmp.
         } else {
             // Another frame in an image sequence, or layer in a layered image.
-            // TODO: validate image against self.image_metadata.
+            let first_image = cell_images[0];
+            if !first_image.has_same_cicp(&self.image_metadata)
+                || first_image.alpha_premultiplied != self.image_metadata.alpha_premultiplied
+                || first_image.alpha_present != self.image_metadata.alpha_present
+            {
+                return Err(AvifError::InvalidArgument);
+            }
         }
 
         println!("### items: {:#?}", self.items);
@@ -263,6 +275,10 @@ impl Encoder {
 
     pub fn add_image(&mut self, image: &Image) -> AvifResult<()> {
         self.add_image_impl(1, 1, &[image], 0, true)
+    }
+
+    pub fn add_layered_image(&mut self, image: &Image) -> AvifResult<()> {
+        self.add_image_impl(1, 1, &[image], 0, false)
     }
 
     pub fn add_image_for_sequence(&mut self, image: &Image, duration: u32) -> AvifResult<()> {
@@ -305,7 +321,8 @@ impl Encoder {
         }
         let image_metadata = &self.image_metadata;
         let mut stream = OStream::default();
-        let is_sequence = self.duration_in_timescales.len() > 1;
+        let is_sequence =
+            self.settings.extra_layer_count == 0 && self.duration_in_timescales.len() > 1;
         let mut ftyp = FileTypeBox {
             major_brand: String::from(if is_sequence { "avis" } else { "avif" }),
             // TODO: check if avio brand is necessary.

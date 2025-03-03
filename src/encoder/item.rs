@@ -37,7 +37,7 @@ pub(crate) struct Item {
         u8,   // 1-based property_index
         bool, // essential
     )>,
-    pub extra_layer_count: Option<u32>,
+    pub extra_layer_count: u32,
     pub dimg_from_id: Option<u16>, // If some, then make an iref from dimg_from_id to this id.
     pub metadata_payload: Vec<u8>,
 }
@@ -147,6 +147,30 @@ impl Item {
             .write_string_with_nul(&String::from("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))?;
         stream.finish_box()?;
         Ok(())
+    }
+
+    fn write_a1lx(&mut self, stream: &mut OStream) -> AvifResult<()> {
+        let layer_sizes: Vec<_> = self.samples[0..self.extra_layer_count as usize]
+            .iter()
+            .map(|x| x.data.len())
+            .collect();
+        let has_large_size = layer_sizes.iter().any(|x| *x > 0xffff);
+        stream.start_box("a1lx")?;
+        // unsigned int(7) reserved = 0;
+        stream.write_bits(0, 7)?;
+        // unsigned int(1) large_size;
+        stream.write_bits(has_large_size as u8, 1)?;
+        // FieldLength = (large_size + 1) * 16;
+        // unsigned int(FieldLength) layer_size[3];
+        for i in 0..3 {
+            let layer_size = *layer_sizes.get(i).unwrap_or(&0);
+            if has_large_size {
+                stream.write_u32(u32_from_usize(layer_size)?)?;
+            } else {
+                stream.write_u16(u16_from_usize(layer_size)?)?;
+            }
+        }
+        stream.finish_box()
     }
 
     fn write_nclx(&self, stream: &mut OStream, image_metadata: &Image) -> AvifResult<()> {
@@ -300,6 +324,14 @@ impl Item {
                     .push((u8_from_usize(streams.len())?, false));
             }
             _ => {}
+        }
+        if self.extra_layer_count > 0 {
+            streams.push(OStream::default());
+            self.write_a1lx(streams.last_mut().unwrap())?;
+            self.associations
+                .push((u8_from_usize(streams.len())?, false));
+            // We don't write 'lsel' property since many decoders do not support it and will reject
+            // the image, see https://github.com/AOMediaCodec/libavif/pull/2429
         }
         Ok(())
     }

@@ -109,20 +109,31 @@ impl Encoder {
             // unsigned int(16) data_reference_index;
             stream.write_u16(0)?;
 
-            // TODO: handle layered images.
-
-            // unsigned int(16) extent_count;
-            stream.write_u16(1)?;
-            item.mdat_offset_locations.push(stream.offset());
-            // unsigned int(offset_size*8) extent_offset;
-            stream.write_u32(0)?;
-            let extent_length = if item.samples.is_empty() {
-                u32_from_usize(item.metadata_payload.len())?
+            if item.extra_layer_count > 0 {
+                let layer_count = item.extra_layer_count as u16 + 1;
+                // unsigned int(16) extent_count;
+                stream.write_u16(layer_count)?;
+                for i in 0..layer_count as usize {
+                    item.mdat_offset_locations.push(stream.offset());
+                    // unsigned int(offset_size*8) extent_offset;
+                    stream.write_u32(0)?;
+                    // unsigned int(length_size*8) extent_length;
+                    stream.write_u32(u32_from_usize(item.samples[i].data.len())?)?;
+                }
             } else {
-                u32_from_usize(item.samples[0].data.len())?
-            };
-            // unsigned int(length_size*8) extent_length;
-            stream.write_u32(extent_length)?;
+                // unsigned int(16) extent_count;
+                stream.write_u16(1)?;
+                item.mdat_offset_locations.push(stream.offset());
+                // unsigned int(offset_size*8) extent_offset;
+                stream.write_u32(0)?;
+                let extent_length = if item.samples.is_empty() {
+                    u32_from_usize(item.metadata_payload.len())?
+                } else {
+                    u32_from_usize(item.samples[0].data.len())?
+                };
+                // unsigned int(length_size*8) extent_length;
+                stream.write_u32(extent_length)?;
+            }
         }
 
         stream.finish_box()?;
@@ -380,6 +391,7 @@ impl Encoder {
     pub(crate) fn write_mdat(&self, stream: &mut OStream) -> AvifResult<()> {
         stream.start_box("mdat")?;
         let mdat_start_offset = stream.offset();
+        let mut layered_color_item_ids = Vec::new();
         // Use multiple passes to pack the items in the following order:
         //   * Pass 0: metadata (Exif/XMP/gain map metadata)
         //   * Pass 1: alpha, gain map image (AV1)
@@ -406,6 +418,13 @@ impl Encoder {
                 if pass == 2 && item.category != Category::Color {
                     continue;
                 }
+                if self.settings.extra_layer_count > 0 && !item.samples.is_empty() {
+                    if item.category == Category::Color {
+                        layered_color_item_ids.push(item.id);
+                    }
+                    continue;
+                }
+
                 let chunk_offset = stream.offset();
                 // TODO: alpha, gainmap, dedupe, etc.
                 if !item.samples.is_empty() {
@@ -424,6 +443,34 @@ impl Encoder {
                         u32_from_usize(chunk_offset)?,
                         *mdat_offset_location,
                     )?;
+                }
+            }
+        }
+        // TODO: understand and simplify this code.
+        if !layered_color_item_ids.is_empty() {
+            let mut layer_index = 0;
+            loop {
+                let mut has_more_samples = false;
+                for color_item_id in &layered_color_item_ids {
+                    let item = &self.items[*color_item_id as usize - 1];
+
+                    if item.samples.len() <= layer_index {
+                        // Already written all samples for this item.
+                        continue;
+                    } else if item.samples.len() > layer_index + 1 {
+                        has_more_samples = true;
+                    }
+
+                    let chunk_offset = stream.offset();
+                    stream.write_slice(&item.samples[layer_index].data)?;
+                    stream.write_u32_at_offset(
+                        u32_from_usize(chunk_offset)?,
+                        item.mdat_offset_locations[layer_index],
+                    )?;
+                }
+                layer_index += 1;
+                if !has_more_samples {
+                    break;
                 }
             }
         }

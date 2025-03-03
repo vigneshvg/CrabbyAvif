@@ -133,6 +133,11 @@ struct CommandLineArgs {
     #[arg(long, value_parser = cicp_parser)]
     cicp: Option<Nclx>,
 
+    /// Auto set parameters to encode a simple layered image supporting progressive rendering from
+    /// a single input frame.
+    #[arg(long, default_value = "false")]
+    progressive: bool,
+
     /// Input file (y4m)
     #[arg(allow_hyphen_values = false)]
     input_file: String,
@@ -404,9 +409,16 @@ fn main() {
         image.matrix_coefficients = nclx.matrix_coefficients;
     }
 
-    let settings = Settings::default();
-    let mut encoder = Encoder::create_with_settings(&settings);
+    let settings = Settings {
+        extra_layer_count: if args.progressive { 1 } else { 0 },
+        ..Default::default()
+    };
+    let mut encoder = Encoder::create_with_settings(&settings).expect("failed to create encoder");
     if y4m.has_more_frames() {
+        if args.progressive {
+            println!("Automatic progressive encoding can only have one input image.");
+            return;
+        }
         let mut frame_count = 0;
         loop {
             encoder
@@ -423,7 +435,18 @@ fn main() {
         }
         println!("added {frame_count} frames");
     } else {
-        encoder.add_image(&image).expect("add image failed");
+        if args.progressive {
+            // Encode first layer.
+            encoder
+                .add_layered_image(&image)
+                .expect("add image failed for first layer");
+            // Encode second layer.
+            encoder
+                .add_layered_image(&image)
+                .expect("add image failed for second layer");
+        } else {
+            encoder.add_image(&image).expect("add image failed");
+        }
     }
 
     let edata = encoder.finish().expect("finish failed");
