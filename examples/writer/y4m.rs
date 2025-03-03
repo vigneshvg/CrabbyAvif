@@ -349,11 +349,20 @@ impl Y4MReader {
             ..Default::default()
         };
         image.allocate_planes(Category::Color)?;
-        if self.has_alpha {
+        if self.has_alpha && true {
             image.allocate_planes(Category::Alpha)?;
         }
         let reader = self.reader.as_mut().unwrap();
         for plane in ALL_PLANES {
+            if plane == Plane::A && false {
+                let plane_data = image.plane_data(Plane::Y).unwrap();
+                let mut row_slice = vec![0; plane_data.width as usize];
+                for y in 0..plane_data.height {
+                    reader
+                        .read_exact(&mut row_slice)
+                        .or(Err(AvifError::UnknownError("".into())))?;
+                }
+            }
             if !image.has_plane(plane) {
                 continue;
             }

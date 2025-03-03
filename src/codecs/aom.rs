@@ -30,6 +30,7 @@ use std::mem::MaybeUninit;
 pub struct Aom {
     encoder: Option<aom_codec_ctx_t>,
     aom_config: Option<aom_codec_enc_cfg>,
+    config: Option<EncoderConfig>,
 }
 
 const AOM_CODEC_OK: u32 = 0;
@@ -167,6 +168,34 @@ impl Encoder for Aom {
                 },
                 _ => todo!("not implemented"),
             }
+            self.config = Some(*config);
+        } else if self.config.unwrap_ref() != config {
+            let aom_config = self.aom_config.unwrap_mut();
+            if aom_config.g_w != image.width || aom_config.g_h != image.height {
+                // Dimension changes aren't allowed.
+                return Err(AvifError::NotImplemented);
+            }
+            let last_config = self.config.unwrap_ref();
+            if last_config.quantizer != config.quantizer {
+                if aom_config.rc_end_usage == aom_rc_mode_AOM_VBR
+                    || aom_config.rc_end_usage == aom_rc_mode_AOM_CBR
+                {
+                    aom_config.rc_min_quantizer = config.quantizer as u32;
+                    aom_config.rc_max_quantizer = config.quantizer as u32;
+                }
+                let err = unsafe {
+                    aom_codec_enc_config_set(
+                        self.encoder.unwrap_mut() as *mut _,
+                        self.aom_config.unwrap_ref() as *const _,
+                    )
+                };
+                if err != aom_codec_err_t_AOM_CODEC_OK {
+                    return Err(AvifError::UnknownError(format!(
+                        "aom_codec_enc_config_set failed. err: {err}"
+                    )));
+                }
+            }
+            self.config = Some(*config);
         }
         let mut aom_image: aom_image_t = unsafe { std::mem::zeroed() };
         aom_image.fmt = aom_format(image, category)?;

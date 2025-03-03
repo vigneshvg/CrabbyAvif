@@ -60,7 +60,7 @@ pub trait Decoder {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct EncoderConfig {
     pub tile_rows_log2: i32,
     pub tile_columns_log2: i32,

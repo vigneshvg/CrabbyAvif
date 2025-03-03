@@ -45,12 +45,17 @@ pub struct Settings {
     pub extra_layer_count: u32,
     // changeable.
     pub quality: i32,
-    pub min_quantizer: i32,
-    pub max_quantizer: i32,
     pub tile_rows_log2: i32,
     pub tile_columns_log2: i32,
     pub auto_tiling: bool,
     // end of changeable.
+}
+
+impl Settings {
+    pub(crate) fn quantizer(&self) -> i32 {
+        // TODO: account for category here.
+        ((100 - self.quality) * 63 + 50) / 100
+    }
 }
 
 #[derive(Debug, Default)]
@@ -256,9 +261,9 @@ impl Encoder {
                 // TODO: pad the image so that the dimensions of all cells are equal.
             }
             let encoder_config = EncoderConfig {
-                tile_rows_log2: 0,
-                tile_columns_log2: 0,
-                quantizer: 50,
+                tile_rows_log2: self.settings.tile_rows_log2,
+                tile_columns_log2: self.settings.tile_columns_log2,
+                quantizer: self.settings.quantizer(),
                 disable_lagged_output: true,
                 is_single_image,
             };
@@ -274,11 +279,7 @@ impl Encoder {
     }
 
     pub fn add_image(&mut self, image: &Image) -> AvifResult<()> {
-        self.add_image_impl(1, 1, &[image], 0, true)
-    }
-
-    pub fn add_layered_image(&mut self, image: &Image) -> AvifResult<()> {
-        self.add_image_impl(1, 1, &[image], 0, false)
+        self.add_image_impl(1, 1, &[image], 0, self.settings.extra_layer_count == 0)
     }
 
     pub fn add_image_for_sequence(&mut self, image: &Image, duration: u32) -> AvifResult<()> {

@@ -409,8 +409,9 @@ fn main() {
         image.matrix_coefficients = nclx.matrix_coefficients;
     }
 
-    let settings = Settings {
+    let mut settings = Settings {
         extra_layer_count: if args.progressive { 1 } else { 0 },
+        quality: args.quality.unwrap_or(60) as i32,
         ..Default::default()
     };
     let mut encoder = Encoder::create_with_settings(&settings).expect("failed to create encoder");
@@ -436,13 +437,17 @@ fn main() {
         println!("added {frame_count} frames");
     } else {
         if args.progressive {
-            // Encode first layer.
+            // Encode the base layer with very low quality.
+            settings.quality = 2;
+            encoder.update_settings(&settings);
             encoder
-                .add_layered_image(&image)
+                .add_image(&image)
                 .expect("add image failed for first layer");
-            // Encode second layer.
+            // Encode the second layer with the requested quality.
+            settings.quality = args.quality.unwrap_or(60) as i32;
+            encoder.update_settings(&settings);
             encoder
-                .add_layered_image(&image)
+                .add_image(&image)
                 .expect("add image failed for second layer");
         } else {
             encoder.add_image(&image).expect("add image failed");
