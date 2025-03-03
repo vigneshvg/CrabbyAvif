@@ -469,7 +469,7 @@ pub struct PixelAspectRatio {
 
 /// cbindgen:field-names=[maxCLL, maxPALL]
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ContentLightLevelInformation {
     pub max_cll: u16,
     pub max_pall: u16,

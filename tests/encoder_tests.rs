@@ -68,6 +68,18 @@ fn generate_random_image(
             }
         }
     }
+    if rng.gen() {
+        image.pasp = Some(PixelAspectRatio {
+            h_spacing: rng.gen(),
+            v_spacing: rng.gen(),
+        });
+    }
+    if rng.gen() {
+        image.clli = Some(ContentLightLevelInformation {
+            max_cll: rng.gen(),
+            max_pall: rng.gen(),
+        });
+    }
     Ok(image)
 }
 
@@ -110,6 +122,8 @@ fn encode_decode(
     assert_eq!(image.depth, depth);
     assert_eq!(image.yuv_format, yuv_format);
     assert_eq!(image.yuv_range, yuv_range);
+    assert_eq!(image.pasp, input_image.pasp);
+    assert_eq!(image.clli, input_image.clli);
 
     if !HAS_DECODER {
         return Ok(());
