@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crabby_avif::decoder::CompressionFormat;
+use crabby_avif::decoder::ProgressiveState;
 use crabby_avif::image::*;
 use crabby_avif::*;
 
@@ -131,3 +132,98 @@ fn encode_decode(
     assert!(decoder.next_image().is_ok());
     Ok(())
 }
+
+fn test_progressive_decode(
+    edata: Vec<u8>,
+    width: u32,
+    height: u32,
+    extra_layer_count: u32,
+) -> AvifResult<()> {
+    let mut decoder = decoder::Decoder::default();
+    decoder.settings.allow_progressive = true;
+    decoder.set_io_vec(edata);
+    assert!(decoder.parse().is_ok());
+    let image = decoder.image().expect("image was none");
+    assert!(matches!(image.progressive_state, ProgressiveState::Active));
+    assert_eq!(decoder.image_count(), extra_layer_count + 1);
+    assert_eq!(image.width, width);
+    assert_eq!(image.height, height);
+    if !HAS_DECODER {
+        return Ok(());
+    }
+    for _ in 0..extra_layer_count + 1 {
+        let res = decoder.next_image();
+        assert!(res.is_ok());
+        let image = decoder.image().expect("image was none");
+        assert_eq!(image.width, width);
+        assert_eq!(image.height, height);
+    }
+    Ok(())
+}
+
+#[test]
+fn progressive_quality_change() -> AvifResult<()> {
+    if !HAS_ENCODER {
+        return Ok(());
+    }
+    let image = generate_random_image(256, 256, 8, PixelFormat::Yuv444, YuvRange::Full, false)?;
+    let mut settings = encoder::Settings {
+        quality: 2,
+        extra_layer_count: 1,
+        ..Default::default()
+    };
+    let mut encoder = encoder::Encoder::create_with_settings(&settings)?;
+    encoder.add_image(&image)?;
+    settings.quality = 90;
+    encoder.update_settings(&settings)?;
+    encoder.add_image(&image)?;
+    let edata = encoder.finish()?;
+    assert!(!edata.is_empty());
+    test_progressive_decode(edata, 256, 256, settings.extra_layer_count)?;
+    Ok(())
+}
+
+#[test]
+fn progressive_grid() -> AvifResult<()> {
+    if !HAS_ENCODER {
+        return Ok(());
+    }
+    let image = generate_random_image(256, 256, 8, PixelFormat::Yuv444, YuvRange::Full, false)?;
+    let mut settings = encoder::Settings {
+        quality: 50,
+        extra_layer_count: 1,
+        ..Default::default()
+    };
+    let mut encoder = encoder::Encoder::create_with_settings(&settings)?;
+    let images = [&image, &image];
+    encoder.add_image_grid(2, 1, &images)?;
+    settings.quality = 90;
+    encoder.update_settings(&settings)?;
+    encoder.add_image_grid(2, 1, &images)?;
+    let edata = encoder.finish()?;
+    assert!(!edata.is_empty());
+    test_progressive_decode(edata, 512, 256, settings.extra_layer_count)?;
+    Ok(())
+}
+
+#[test]
+fn progressive_same_layers() -> AvifResult<()> {
+    if !HAS_ENCODER {
+        return Ok(());
+    }
+    let image = generate_random_image(256, 256, 8, PixelFormat::Yuv444, YuvRange::Full, false)?;
+    let settings = encoder::Settings {
+        extra_layer_count: 3,
+        ..Default::default()
+    };
+    let mut encoder = encoder::Encoder::create_with_settings(&settings)?;
+    for _ in 0..4 {
+        encoder.add_image(&image)?;
+    }
+    let edata = encoder.finish()?;
+    assert!(!edata.is_empty());
+    test_progressive_decode(edata, 256, 256, settings.extra_layer_count)?;
+    Ok(())
+}
+
+// TODO: too many layers and too few layers.
