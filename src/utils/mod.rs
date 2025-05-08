@@ -60,7 +60,9 @@ impl UFraction {
 // are used as i32, but they are signalled as u32 according to the specification
 // as of 2024. This may be fixed in later versions of the specification, see
 // https://github.com/AOMediaCodec/libavif/pull/1749#discussion_r1391612932.
+/// cbindgen:field-names=[n,d]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[repr(C)]
 pub struct IFraction(pub i32, pub i32);
 
 impl TryFrom<UFraction> for IFraction {

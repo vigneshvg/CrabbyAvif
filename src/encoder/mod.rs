@@ -36,6 +36,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 pub struct ScalingMode {
     pub horizontal: IFraction,
     pub vertical: IFraction,
