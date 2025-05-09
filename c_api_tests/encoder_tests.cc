@@ -53,15 +53,44 @@ TEST(BasicTest, EncodeDecode) {
   encoder->speed = 10;
   ASSERT_NE(encoder, nullptr);
   AvifRwDataPtr encoded(new avifRWData());
-  avifResult result =
-      avifEncoderWrite(encoder.get(), image.get(), encoded.get());
-  ASSERT_EQ(result, AVIF_RESULT_OK);
+  ASSERT_EQ(avifEncoderWrite(encoder.get(), image.get(), encoded.get()),
+            AVIF_RESULT_OK);
+
   auto decoder = CreateDecoder(*encoded);
   ASSERT_NE(decoder, nullptr);
   ASSERT_EQ(avifDecoderParse(decoder.get()), AVIF_RESULT_OK);
   ASSERT_EQ(avifDecoderNextImage(decoder.get()), AVIF_RESULT_OK);
   ASSERT_GT(testutil::GetPsnr(*image, *decoder->image, /*ignore_alpha=*/false),
             40.0);
+}
+
+TEST(TransformTest, ClapIrotImir) {
+  ImagePtr image = testutil::CreateImage(/*width=*/12, /*height=*/34,
+                                         /*depth=*/8, AVIF_PIXEL_FORMAT_YUV444,
+                                         AVIF_PLANES_ALL, AVIF_RANGE_FULL);
+  ASSERT_NE(image, nullptr);
+  testutil::FillImageGradient(image.get(), /*offset=*/0);
+  // TODO - b/416560730 : Add clap once avifCleanApertureBoxFromCropRect is added to the C API.
+  image->transformFlags |= AVIF_TRANSFORM_IROT;
+  image->irot.angle = 1;
+  image->transformFlags |= AVIF_TRANSFORM_IMIR;
+  image->imir.axis = 1;
+
+  EncoderPtr encoder(avifEncoderCreate());
+  encoder->speed = 10;
+  ASSERT_NE(encoder, nullptr);
+  AvifRwDataPtr encoded(new avifRWData());
+  ASSERT_EQ(avifEncoderWrite(encoder.get(), image.get(), encoded.get()),
+            AVIF_RESULT_OK);
+
+  auto decoder = CreateDecoder(*encoded);
+  ASSERT_NE(decoder, nullptr);
+  ASSERT_EQ(avifDecoderParse(decoder.get()), AVIF_RESULT_OK);
+  ASSERT_EQ(avifDecoderNextImage(decoder.get()), AVIF_RESULT_OK);
+
+  EXPECT_EQ(decoder->image->transformFlags, image->transformFlags);
+  EXPECT_EQ(decoder->image->irot.angle, image->irot.angle);
+  EXPECT_EQ(decoder->image->imir.axis, image->imir.axis);
 }
 
 }  // namespace

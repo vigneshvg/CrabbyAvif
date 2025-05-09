@@ -221,8 +221,6 @@ impl From<&Image> for avifImage {
 }
 
 impl From<&avifImage> for image::Image {
-    // Only copies fields necessary for reformatting.
-    // TODO - b/416560730: Copy all fields.
     fn from(image: &avifImage) -> image::Image {
         image::Image {
             width: image.width,
@@ -230,6 +228,7 @@ impl From<&avifImage> for image::Image {
             depth: image.depth as u8,
             yuv_format: image.yuvFormat,
             yuv_range: image.yuvRange,
+            chroma_sample_position: image.yuvChromaSamplePosition,
             alpha_present: !image.alphaPlane.is_null(),
             alpha_premultiplied: image.alphaPremultiplied == AVIF_TRUE,
             planes: [
@@ -271,7 +270,55 @@ impl From<&avifImage> for image::Image {
             color_primaries: image.colorPrimaries,
             transfer_characteristics: image.transferCharacteristics,
             matrix_coefficients: image.matrixCoefficients,
+            clli: image.clli(),
+            pasp: image.pasp(),
+            clap: image.clap(),
+            irot_angle: image.irot_angle(),
+            imir_axis: image.imir_axis(),
+            // TODO - b/416560730: Copy exif, icc and xmp.
             ..Default::default()
+        }
+    }
+}
+
+impl avifImage {
+    fn clli(&self) -> Option<ContentLightLevelInformation> {
+        if self.clli != ContentLightLevelInformation::default() {
+            Some(self.clli)
+        } else {
+            None
+        }
+    }
+
+    fn pasp(&self) -> Option<PixelAspectRatio> {
+        if (self.transformFlags & AVIF_TRANSFORM_PASP) != 0 {
+            Some(self.pasp)
+        } else {
+            None
+        }
+    }
+
+    fn clap(&self) -> Option<CleanAperture> {
+        if (self.transformFlags & AVIF_TRANSFORM_CLAP) != 0 {
+            Some((&self.clap).into())
+        } else {
+            None
+        }
+    }
+
+    fn irot_angle(&self) -> Option<u8> {
+        if (self.transformFlags & AVIF_TRANSFORM_IROT) != 0 {
+            Some(self.irot.angle)
+        } else {
+            None
+        }
+    }
+
+    fn imir_axis(&self) -> Option<u8> {
+        if (self.transformFlags & AVIF_TRANSFORM_IMIR) != 0 {
+            Some(self.imir.axis)
+        } else {
+            None
         }
     }
 }
