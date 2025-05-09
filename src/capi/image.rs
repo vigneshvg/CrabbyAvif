@@ -275,7 +275,9 @@ impl From<&avifImage> for image::Image {
             clap: image.clap(),
             irot_angle: image.irot_angle(),
             imir_axis: image.imir_axis(),
-            // TODO - b/416560730: Copy exif, icc and xmp.
+            exif: (&image.exif).into(),
+            icc: (&image.icc).into(),
+            xmp: (&image.xmp).into(),
             ..Default::default()
         }
     }

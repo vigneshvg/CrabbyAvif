@@ -239,4 +239,10 @@ double GetPsnr(const avifImage& image1, const avifImage& image2,
   return std::min(-10 * std::log10(normalized_error), 98.99);
 }
 
+bool AreByteSequencesEqual(const uint8_t* data1, size_t data1_length,
+                           const uint8_t* data2, size_t data2_length) {
+  if (data1_length != data2_length) return false;
+  return data1_length == 0 || std::equal(data1, data1 + data1_length, data2);
+}
+
 }  // namespace testutil
