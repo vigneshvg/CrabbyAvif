@@ -17,6 +17,7 @@ use crabby_avif::reformat::rgb;
 use crabby_avif::reformat::rgb::ChromaDownsampling;
 use crabby_avif::*;
 
+#[cfg(feature = "sharpyuv")]
 use test_case::test_case;
 use test_case::test_matrix;
 
@@ -348,6 +349,7 @@ fn default_8bit_png_to_avif() -> AvifResult<()> {
     })
 }
 
+#[cfg(not(feature = "android_mediacodec"))]
 #[test_matrix(
     [(8, 31), (10, 101), (12, 401), (16, 6421)],
     [8, 10, 12, 16]
@@ -456,6 +458,7 @@ fn all_same_bitdepths(
     })
 }
 
+#[cfg(feature = "sharpyuv")]
 #[test_matrix([8, 10, 12])]
 fn sharpyuv_8bit(yuv_depth: u8) -> AvifResult<()> {
     rgb_to_yuv_whole_range(&RgbToYuvParam {
@@ -473,6 +476,7 @@ fn sharpyuv_8bit(yuv_depth: u8) -> AvifResult<()> {
     })
 }
 
+#[cfg(feature = "sharpyuv")]
 #[test_case(YuvRange::Full, MatrixCoefficients::Bt601)]
 #[test_case(YuvRange::Limited, MatrixCoefficients::Bt601)]
 #[test_case(YuvRange::Full, MatrixCoefficients::Bt709)]
@@ -495,6 +499,7 @@ fn sharpyuv_8bit_range_mc(
     })
 }
 
+#[cfg(feature = "sharpyuv")]
 #[test]
 fn sharpyuv_10bit() -> AvifResult<()> {
     rgb_to_yuv_whole_range(&RgbToYuvParam {
@@ -512,6 +517,7 @@ fn sharpyuv_10bit() -> AvifResult<()> {
     })
 }
 
+#[cfg(feature = "sharpyuv")]
 #[test_matrix([8, 10, 12])]
 fn sharpyuv_12bit(yuv_depth: u8) -> AvifResult<()> {
     rgb_to_yuv_whole_range(&RgbToYuvParam {
@@ -529,6 +535,7 @@ fn sharpyuv_12bit(yuv_depth: u8) -> AvifResult<()> {
     })
 }
 
+#[cfg(feature = "sharpyuv")]
 #[test_matrix([8, 10, 12])]
 fn sharpyuv_16bit(yuv_depth: u8) -> AvifResult<()> {
     rgb_to_yuv_whole_range(&RgbToYuvParam {
